@@ -1,14 +1,13 @@
 package main
 
 import (
-	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/fanfree/fanfree/engine/gitrepo"
 	"github.com/fanfree/fanfree/engine/safety"
 	"github.com/fanfree/fanfree/engine/scan"
 	"github.com/fanfree/fanfree/engine/trash"
@@ -28,7 +27,7 @@ func (a *app) requestTrash(n int32) {
 		a.shake(n)
 		msg := why
 		if v.Level() == safety.Protected {
-			msg = "「" + a.name(n) + "」受系统保护：" + v.Reason()
+			msg = Tf("「%s」受系统保护：%s", a.name(n), T(v.Reason()))
 		}
 		a.toast(ui.Toast{Title: msg})
 		return
@@ -37,7 +36,16 @@ func (a *app) requestTrash(n int32) {
 		a.ask = &askState{kind: askRisky, node: n, t0: a.now}
 		return
 	}
+	if list := a.checkoutsIn(n); len(list) > 0 {
+		a.ask = &askState{kind: askGit, node: n, list: list, t0: a.now}
+		return
+	}
 	a.trashOne(n)
+}
+
+// asksFirst says whether deleting n stops for a confirm (the dragged ball goes back meanwhile).
+func (a *app) asksFirst(n int32) bool {
+	return a.verdict(n).Level() == safety.Risky || len(a.checkoutsIn(n)) > 0
 }
 
 func (a *app) trashOne(n int32) {
@@ -45,8 +53,8 @@ func (a *app) trashOne(n int32) {
 	name, size := a.name(n), nd.Size
 	it := cleanItem{n, trash.Meta{Size: size, Dir: nd.IsDir(), Source: trash.ByManual, Level: int(a.verdict(n).Level())}, ""}
 	b := a.trashNodes([]cleanItem{it}, false)
-	a.toast(ui.Toast{Title: fmt.Sprintf("已将「%s」移至%s（%s）", name, trashName(), fmtSize(size)),
-		Action: "撤销", OnAction: func() { a.undo(b) }})
+	a.toast(ui.Toast{Title: Tf("已将「%s」移至%s（%s）", name, trashName(), fmtSize(size)),
+		Action: T("撤销"), OnAction: func() { a.undo(b) }})
 }
 
 func (a *app) shake(n int32) { a.shakeN, a.shakeT0 = n, a.now }
@@ -110,7 +118,9 @@ func (a *app) rowDrag(r ui.Element, n int32) {
 			f := &a.binS
 			T := &binTiers[f.tier]
 			ox, oy := f.origin()
-			d.hot = d.x >= ox-14 && d.x <= ox+T.w+14 && d.y >= oy-20 && d.y <= oy+T.h+14
+			x0, y0 := f.toHero(ox, oy)
+			x1, y1 := f.toHero(ox+T.w, oy+T.h)
+			d.hot = d.x >= x0-14 && d.x <= x1+14 && d.y >= y0-20 && d.y <= y1+14
 			f.hot = d.hot
 			r.Cursor(ui.CursorGrabbing)
 			a.frame = true
@@ -118,7 +128,7 @@ func (a *app) rowDrag(r ui.Element, n int32) {
 	}
 	if _, _, ended := r.DragEnded(); ended && d.node == n {
 		a.binS.hot = false
-		if d.on && d.hot && a.verdict(n).Level() != safety.Risky {
+		if d.on && d.hot && !a.asksFirst(n) {
 			a.drop = dropSrc{n, d.x, d.y, d.c, true}
 			*d = dragState{}
 			a.selected = n
@@ -127,7 +137,7 @@ func (a *app) rowDrag(r ui.Element, n int32) {
 		}
 		if d.on {
 			if d.hot {
-				a.requestTrash(n) // personal data: ask first; the ball goes back meanwhile
+				a.requestTrash(n) // personal data or a checkout: ask first; the ball goes back meanwhile
 			}
 			d.back, d.bx, d.by, d.on, d.press = a.now, d.x, d.y, false, false
 			return
@@ -151,14 +161,14 @@ func (a *app) paintDrag(p *ui.Painter) {
 		return
 	}
 	k := float64(p.Now().Sub(d.back)) / float64(200*time.Millisecond)
-	if k >= 1 || !a.motion() {
+	if k >= 1 || !a.trashFX() {
 		d.back = time.Time{}
 		return
 	}
 	e := float32(easeStd(k))
 	hx, hy := d.home.X+d.home.W/2, d.home.Y+d.home.H/2
 	a.paintBall(p, d.bx+(hx-d.bx)*e, d.by+(hy-d.by)*e, d.d/2*(1-.6*e), d.c, 1-e)
-	p.AnimationFrame()
+	a.tick(p)
 }
 
 // ------------------------------------------------------------------------------------------
@@ -167,7 +177,7 @@ func (a *app) paintDrag(p *ui.Painter) {
 // landed is what the dock counts: trash entries whose ball is no longer in the air.
 func (a *app) landed(ents []pileEnt) (n int, size int64) {
 	for _, e := range ents {
-		if a.binS.inflight[e.key] > 0 || (e.id == "" && a.motion() && a.binS.landed[e.key].IsZero()) {
+		if a.binS.inflight[e.key] > 0 || (e.id == "" && a.trashFX() && a.binS.landed[e.key].IsZero()) {
 			continue
 		}
 		n++
@@ -183,28 +193,39 @@ func (a *app) dock(c *ui.Context) {
 	a.syncBin(ents)
 	total := len(ents)
 	n, size := a.landed(ents)
-	T := &binTiers[f.tier]
-	// the trash scene grows the bin into a hero in the chart's bottom-right corner
+	tier := &binTiers[f.tier] // not T: the dock's text calls the translator T below
+	// the bin rests in the window's bottom-right corner, at the foot of the right column; the
+	// trash scene grows it into a hero on the trash panel's stage, in the same column
 	inT := a.sceneOn() == sceneTrash
-	_, H := c.Size()
-	cr := a.chartR
+	W, H := c.Size()
 	hk := 0.0
 	if inT {
 		hk = 1
 	}
 	k := max(0, float32(a.springTo(&f.heroSp, hk)))
 	f.heroK = min(k, 1)
-	heroH := max(96, min(H*.19, 160))
-	if a.sz == szCompact {
-		heroH = max(84, min(H*.16, 116))
+	// the hero's place and size come from the trash view's final layout, not from the stage as
+	// it moves: the panels widen and the bin's reserved foot shrinks while the bin grows, and
+	// following those mid-way bent its path (it dipped before settling)
+	if inT && a.wTto > 0 {
+		fw := a.wTto - 1 // the trash panel's width, less its left hairline
+		th := f.tsaH
+		if th == 0 {
+			th = 50
+		}
+		f.heroS = max(dockS, min(heroBinH(H, a.sz)/tier.h, fw*.55/tier.w, 3.4))
+		f.heroTX, f.heroTY = W-fw/2, H-2-th-stageBottom
+	} else if f.heroS == 0 {
+		f.heroS, f.heroTX, f.heroTY = dockS, f.right-tier.w/2, f.bottom
 	}
-	f.heroS = max(1, min(min(cr.W*.17, 190)/T.w, heroH/T.h, 2.6))
-	hw := T.w * f.heroS
+	hw := tier.w * f.heroS
 	f.heroW = hw + 56
-	f.heroTX, f.heroTY = cr.X+cr.W-dockR-hw/2, cr.Y+cr.H-dockB-10
 	nat := a.dockNat()
-	row := ui.Row(c.Key("dock")).Absolute().Right(dockR-14).Bottom(dockB-10).Padding(12, 14, 10, 14).Gap(12).AlignItems(ui.End).
-		Height(nat + (T.h*f.heroS+52-nat)*k).MinWidth(T.w + 28 + (hw+28-T.w)*k)
+	// the row covers the bin alone as the hero (the exit button sits just above it)
+	rx := dockR - 14 + (W-f.heroTX-(hw+28)/2-(dockR-14))*k
+	by := dockB - 10 + (H-f.heroTY-10-(dockB-10))*k
+	row := ui.Row(c.Key("dock")).Absolute().Right(rx).Bottom(by).ZIndex(3).Padding(12, 14, 10, 14).Gap(18).AlignItems(ui.End).
+		Height(nat + (tier.h*f.heroS+22-nat)*k).MinWidth(tier.w*dockS + 28 + (hw-tier.w*dockS)*k)
 	// hover a ball of the hero bin: its row lights and scrolls into view, its arc lights
 	prev := f.hov
 	f.hov = ""
@@ -226,60 +247,98 @@ func (a *app) dock(c *ui.Context) {
 	}
 	row.Children(func() {
 		ui.Spacer(c)
-		ui.Column(c.Key("dtext")).Shrink(1).Gap(1).AlignItems(ui.End).Opacity(max(0, 1-k*1.8) * (1 - .82*a.askK)).Draw(func(p *ui.Painter, r ui.Rect) {
-			if k == 0 {
-				f.textH = r.H
-			}
-		}).Children(func() {
-			title := trashName()
-			if total > 0 {
-				title += " · " + T.name
-			}
-			ui.Text(c, title).FontSize(12).TextColor(pal.t2).SingleLine()
-			sz := "空"
-			if n > 0 {
-				sz = fmtSize(size)
-			}
-			ui.Text(c, sz).FontSize(20).FontWeight(600).SingleLine()
-			sub := "拖动文件到这里删除"
-			if total > 0 {
-				sub = fmtNum(int64(n)) + " 项 · 点按查看"
-			}
-			if !inT {
-				sub = "点按查看"
-				if total > 0 {
-					sub = fmtNum(int64(n)) + " 项"
+		th := f.textH
+		if th == 0 {
+			th = 74
+		}
+		ui.Column(c.Key("dtextc")).Shrink(1).Clip().Children(func() {
+			ui.Column(c.Key("dtext")).Gap(3).AlignItems(ui.End).Translate(0, (th+4)*min(1, k*1.6)).Opacity(1 - .82*a.askK).Draw(func(p *ui.Painter, r ui.Rect) {
+				if k == 0 {
+					f.textH = r.H
 				}
-			}
-			ui.Text(c, sub).FontSize(12).TextColor(pal.t3).SingleLine().Ellipsis("…")
+			}).Children(func() {
+				sz := T("空")
+				if n > 0 {
+					sz = fmtSize(size)
+				}
+				st := ui.Text(c.Key("dsz"), sz).FontSize(dockFS).FontWeight(600).SingleLine().Draw(func(p *ui.Painter, r ui.Rect) {
+					if k == 0 { // at rest: remember where, for the flight to the header
+						f.szDX, f.szDY, f.szSet = W-r.X, H-r.Y, true
+					}
+				})
+				if k > 0 && a.motion() {
+					st.Opacity(0) // it is flying, or it is the header's now
+				}
+				sub := T("拖动文件到这里删除")
+				if total > 0 {
+					sub = Tf("%s · 点按查看", nItems(int64(n)))
+				}
+				if !inT {
+					sub = T("点按查看")
+					if total > 0 {
+						sub = nItems(int64(n))
+					}
+				}
+				ui.Text(c, sub).FontSize(14).TextColor(pal.t3).SingleLine().Ellipsis("…")
+			})
 		})
-		bin := ui.Box(c.Key("bin")).Size(T.w, T.h).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
-			a.now = p.Now()
-			f.right, f.bottom = r.X+r.W, r.Y+r.H
+		bin := ui.Box(c.Key("bin")).Size(tier.w*dockS, tier.h*dockS).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
+			a.now = a.clock(p.Now())
+			// the slot as the tier draws it, at scale 1: hero() zooms it about its bottom centre
+			f.right, f.bottom = r.X+r.W/2+tier.w/2, r.Y+r.H
 			a.paintBinBack(p, f.ents)
 		})
 		if !inT {
-			bin.Tooltip("查看" + trashName())
+			bin.Tooltip(Tf("查看%s", trashName()))
 		}
 	})
-	if !inT {
-		row.Cursor(ui.CursorPointer)
-		if row.Clicked() && a.bin != nil { // an empty bin opens too
+	a.flySize(c, k, n, size)
+	row.Cursor(ui.CursorPointer)
+	if row.Clicked() {
+		switch {
+		case inT && f.hov != "": // a ball: bring its row into view, stay in the trash
+			f.hovNew = true
+			a.frame = true
+		case inT: // the hero bin closes the trash view, like the button above it
+			a.goScene(sceneBrowse)
+		case a.bin != nil: // an empty bin opens too
 			a.goScene(sceneTrash)
 		}
 	}
 }
 
-// dockR and dockB keep the bin off the chart's right and bottom edges.
+// flySize is the shared trash size: on the way into the trash view the dock's size text
+// grows into the header's, and shrinks back on the way out, riding the hero's spring.
+func (a *app) flySize(c *ui.Context, k float32, n int, size int64) {
+	f := &a.binS
+	if k <= 0 || k >= 1 || !f.szSet || f.bigR.W == 0 || !a.motion() {
+		return
+	}
+	W, H := c.Size()
+	x0, y0 := W-f.szDX, H-f.szDY
+	x1, y1 := f.bigR.X, f.bigR.Y
+	fs := f.bigF
+	if fs == 0 {
+		fs = 34
+	}
+	s := T("空")
+	if n > 0 {
+		s = fmtSize(size)
+	}
+	ui.Text(c.Key("flysz"), s).Absolute().Left(x0 + (x1-x0)*k).Top(y0 + (y1-y0)*k).ZIndex(6).PassThrough().
+		FontSize(dockFS + (fs-dockFS)*k).FontWeight(600).LetterSpacing(-.8 * k).SingleLine().TextColor(a.pal.text)
+}
+
+// dockR and dockB keep the bin off the window's (or, as the hero, the chart's) edges.
 const dockR, dockB = 22, 14
 
 // dockNat is the trash row's resting height: its text or the bin, whichever is taller.
 func (a *app) dockNat() float32 {
 	th := a.binS.textH
 	if th == 0 {
-		th = 62
+		th = 74
 	}
-	return max(th, binTiers[a.binS.tier].h) + 22
+	return max(th, binTiers[a.binS.tier].h*dockS) + 22
 }
 
 // goScene switches the right panel; the new one staggers in.
@@ -302,6 +361,7 @@ func (a *app) goScene(s int) {
 // the very frame of the press) and lets the new panel's parts stagger in.
 func (a *app) switchScene(apply func()) {
 	a.sceneNext++
+	a.inkRefresh(true)
 	apply()
 	a.panelT0, a.sceneT0 = a.now, time.Time{}
 	a.frame = true
@@ -313,11 +373,14 @@ func (a *app) switchScene(apply func()) {
 const (
 	askRisky = iota
 	askEmpty
+	askGit // a folder holding Git working trees
 )
 
 type askState struct {
 	kind int
 	node int32
+	list []int32     // askGit: the checkouts inside
+	chk  *emptyCheck // askEmpty: what git says about the checkouts in the trash
 	t0   time.Time
 }
 
@@ -342,9 +405,6 @@ func (a *app) dialogs(c *ui.Context) {
 	if q != nil {
 		a.askBox(c, q, live)
 	}
-	if a.showSettings {
-		a.settingsModal(c)
-	}
 }
 
 // askClose lets the bubble shrink back into its corner.
@@ -367,7 +427,7 @@ func (a *app) dropAsk(q *askState) {
 func (a *app) askBox(c *ui.Context, q *askState, live bool) {
 	pal := a.pal
 	var title, ok string
-	danger, binIcon := true, false
+	danger := true
 	var body func()
 	switch q.kind {
 	case askRisky:
@@ -376,24 +436,34 @@ func (a *app) askBox(c *ui.Context, q *askState, live bool) {
 			a.dropAsk(q)
 			return
 		}
-		title, ok = "确认删除个人数据？", "仍然移至"+trashName()
+		title, ok = T("确认删除个人数据？"), Tf("仍然移至%s", trashName())
 		body = func() {
-			ui.Text(c, fmt.Sprintf("「%s」被识别为个人数据（%s），大小 %s。", a.name(n), strings.TrimPrefix(a.verdict(n).Reason(), "个人数据，"), fmtSize(a.t.Nodes[n].Size))).TextColor(pal.t2)
-			ui.Text(c, "它会先进入"+trashName()+"，清空前仍可还原。").TextColor(pal.t2)
+			ui.Text(c, Tf("「%s」被识别为个人数据（%s），大小 %s。", a.name(n), T(strings.TrimPrefix(a.verdict(n).Reason(), "个人数据，")), fmtSize(a.t.Nodes[n].Size))).TextColor(pal.t2)
+			ui.Text(c, Tf(markNote, trashName())).TextColor(pal.t2)
 		}
-	case askEmpty:
-		items := a.bin.List()
-		if len(items) == 0 {
+	case askGit:
+		n := q.node
+		if a.t == nil || !a.t.Attached(n) {
 			a.dropAsk(q)
 			return
 		}
-		var size int64
-		for _, it := range items {
-			size += it.Size
+		title, ok = T("删除 Git 工作区？"), Tf("仍然移至%s", trashName())
+		if len(q.list) == 1 && q.list[0] == n {
+			if a.ev.Git(n) == gitrepo.Worktree {
+				title = T("删除这个 Git worktree？")
+			} else {
+				title = T("删除这个 Git 仓库？")
+			}
 		}
-		title, ok = fmt.Sprintf("永久删除这 %s 个项目？", fmtNum(int64(len(items)))), "永久删除"
-		binIcon = true
-		body = func() { a.emptyBody(c, items, size) }
+		body = func() {
+			danger = a.gitAskBody(c, q)
+			if !danger {
+				ok = Tf("移至%s", trashName())
+			}
+		}
+	case askEmpty:
+		a.emptyBubble(c, q, live)
+		return
 	}
 	W, _ := c.Size()
 	surf := pal.panel2
@@ -405,28 +475,20 @@ func (a *app) askBox(c *ui.Context, q *askState, live bool) {
 		Padding(16, 16, 12, 16).Gap(10).FontSize(12.5).Background(surf).Radius(4, 16, 16, 16).
 		Shadow(0, 24, 60, -18, ui.RGBA(0, 0, 0, .7)).TransformOrigin(0, 0)
 	if live {
-		// translate(-6,-6) scale(.35), overshoot to 1.015 at 70%, settle
-		k := a.progress(q.t0, 0, 340*time.Millisecond)
+		// slides in from the window's right edge like a drawer
+		k := a.progress(q.t0, 0, 300*time.Millisecond)
 		if k < 1 {
-			e := float32(bez(.2, .9, .3, 1.1, k))
-			var sc float32
-			if e < .7 {
-				sc = .35 + (1.015-.35)*e/.7
-			} else {
-				sc = 1.015 - .015*(e-.7)/.3
-			}
-			box.Translate(-6*(1-min(1, e/.7)), -6*(1-min(1, e/.7))).Scale(sc, sc).Opacity(min(1, e/.7))
+			box.Translate((bw+14)*(1-float32(easeStd(k))), 0)
 		}
 	} else {
-		// back into the corner: translate(-4,-4) scale(.6), fading
-		e := float32(bez(.4, 0, 1, 1, a.progress(a.askOutT0, 0, 170*time.Millisecond)))
-		box.Translate(-4*e, -4*e).Scale(1-.4*e, 1-.4*e).Opacity(1 - e).PassThrough()
+		// and back out the same way
+		e := float32(easeIn(a.progress(a.askOutT0, 0, 220*time.Millisecond)))
+		box.Translate((bw+14)*e, 0).PassThrough()
 	}
 	part := func(el ui.Element, i int) ui.Element {
 		pk := a.progress(q.t0, time.Duration(90+i*45)*time.Millisecond, 240*time.Millisecond)
 		if pk < 1 {
-			pe := float32(easeStd(pk))
-			el.Opacity(pe).Translate(0, 4*(1-pe))
+			el.Translate(bw*(1-float32(easeStd(pk))), 0)
 		}
 		return el
 	}
@@ -434,9 +496,6 @@ func (a *app) askBox(c *ui.Context, q *askState, live bool) {
 		part(ui.Row(c.Key("ah")).Gap(10).AlignItems(ui.Center).Children(func() {
 			col := pal.level[safety.Risky]
 			ic := icoWarn
-			if binIcon {
-				ic = icoTrash
-			}
 			ui.Box(c).Size(30, 30).Radius(15).Background(col.Alpha(.14)).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
 				icon(c, ic, 17, col, 1.8)
 			})
@@ -444,7 +503,7 @@ func (a *app) askBox(c *ui.Context, q *askState, live bool) {
 		}), 0)
 		part(ui.Column(c.Key("ab")).Gap(6).Children(body), 1)
 		part(ui.Row(c.Key("af")).Gap(8).Justify(ui.End).Padding(4, 0, 0, 0).Children(func() {
-			if a.btn(c.Key("no"), "取消", btnPlain, false, nil).Clicked() && live {
+			if a.btn(c.Key("no"), T("取消"), btnPlain, false, nil).Clicked() && live {
 				a.askClose()
 			}
 			kind := btnDanger
@@ -453,11 +512,8 @@ func (a *app) askBox(c *ui.Context, q *askState, live bool) {
 			}
 			if a.btn(c.Key("ok"), ok, kind, false, nil).Clicked() && live {
 				a.askClose()
-				switch q.kind {
-				case askRisky:
+				if q.kind == askRisky || q.kind == askGit {
 					a.trashOne(q.node)
-				case askEmpty:
-					a.emptyTrash()
 				}
 			}
 		}), 2)
@@ -466,126 +522,66 @@ func (a *app) askBox(c *ui.Context, q *askState, live bool) {
 
 const icoWarn = "M12 8.5v4.5M12 16.4v.1M10.3 4.2L2.9 17.3Q2.2 20 4.6 20H19.4Q21.8 20 21.1 17.3L13.7 4.2Q12 1.8 10.3 4.2Z"
 
-// emptyBody explains where everything in the bin came from, the learned habits above all.
-func (a *app) emptyBody(c *ui.Context, items []trash.Item, size int64) {
-	pal := a.pal
-	type grp struct {
-		n    int
-		size int64
-		ids  []string
-	}
-	var rule, manual, hab grp
-	habits := map[string]*grp{}
-	var hkeys []string
-	for _, it := range items {
-		g := &rule
-		switch it.Source {
-		case trash.ByManual:
-			g = &manual
-		case trash.ByHabit:
-			g = &hab
-			h := habits[it.Habit]
-			if h == nil {
-				h = &grp{}
-				habits[it.Habit] = h
-				hkeys = append(hkeys, it.Habit)
-			}
-			h.n++
-			h.size += it.Size
-		}
-		g.n++
-		g.size += it.Size
-		g.ids = append(g.ids, it.ID)
-	}
-	sort.Strings(hkeys)
-	ui.Text(c, fmtSize(size)+" 会从磁盘上抹掉，之后无法再还原。").TextColor(pal.t2)
-	tot := float32(max(size, 1))
-	ui.Box(c.Key("sbar")).Height(6).Radius(3).Clip().Margin(4, 0).Draw(func(p *ui.Painter, r ui.Rect) {
-		x := r.X
-		for _, s := range []struct {
-			g grp
-			c ui.Color
-		}{{rule, pal.level[safety.Safe]}, {manual, pal.t2}, {hab, pal.level[safety.Review]}} {
-			if s.g.n > 0 {
-				w := r.W * float32(s.g.size) / tot
-				p.Fill(ui.Rect{X: x, Y: r.Y, W: w, H: r.H}, s.c, 0)
-				x += w
-			}
-		}
-	})
-	src := func(key string, g grp, col ui.Color, label string) {
-		if g.n == 0 {
-			return
-		}
-		ui.Row(c.Key(key)).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Box(c).Size(7, 7).Radius(2).Background(col)
-			ui.Text(c, label).TextColor(pal.t2)
-			ui.Text(c, fmt.Sprintf("%d 项", g.n)).FontWeight(600)
-			ui.Spacer(c)
-			ui.Text(c, fmtSize(g.size)).Font(pal.mono).FontSize(12).TextColor(pal.t3)
-		})
-	}
-	src("rule", rule, pal.level[safety.Safe], "按清理规则")
-	src("manual", manual, pal.t2, "你手动删除")
-	src("habit", hab, pal.level[safety.Review], "依据你的历史操作")
-	if hab.n == 0 {
+// emptyTrash annihilates the given items (all of them if ids is nil), deletes them for good off
+// the main thread, and lets the bin shine once they are gone.
+func (a *app) emptyTrash(ids []string) {
+	if a.bin == nil || a.emptying {
 		return
 	}
-	ui.Column(c.Key("hx")).Gap(6).Padding(10, 12).Radius(8).Background(pal.level[safety.Review].Alpha(.08)).Margin(4, 0, 0, 0).Children(func() {
-		for _, k := range hkeys {
-			g := habits[k]
-			d := 0
-			seed := false
-			if a.habit != nil {
-				for _, e := range a.habit.Entries() {
-					if e.Label == k && e.D > d {
-						d, seed = e.D, e.Seed
-					}
-				}
-			}
-			ui.Column(c.Key(k)).Gap(1).Children(func() {
-				ui.Text(c, k).FontWeight(600).FontSize(12)
-				s := ""
-				if d > 0 {
-					s = fmt.Sprintf("你曾手动删除 %d 个同类项", d)
-					if seed {
-						s += "（示例历史）"
-					}
-					s += " → "
-				}
-				ui.Text(c, s+fmt.Sprintf("本次 %d 项 · %s", g.n, fmtSize(g.size))).FontSize(11.5).TextColor(pal.t3)
-			})
-		}
-		if a.btn(c.Key("keep"), fmt.Sprintf("还原这 %d 项", hab.n), btnPlain, true, nil).AlignSelf(ui.Start).Clicked() {
-			a.askClose()
-			a.restore(hab.ids)
-		}
-	})
-}
-
-// emptyTrash tips the bin out, then deletes for good.
-func (a *app) emptyTrash() {
-	if a.bin == nil {
-		return
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
 	}
 	var size int64
+	keys := map[string]bool{}
 	for _, it := range a.bin.List() {
-		size += it.Size
-	}
-	a.startDump(size)
-	wait := time.Duration(0)
-	if a.motion() {
-		wait = 440 * time.Millisecond
-	}
-	a.after(wait, func() {
-		freed, err := a.bin.Empty(nil)
-		a.trashed = nil
-		a.freedTotal += freed
-		a.disk.ok = false // re-read free space
-		a.binS.landed = map[string]time.Time{}
-		if err != nil {
-			a.toast(ui.Toast{Title: "部分项目未能删除", Description: firstLine(err.Error()), Type: "error"})
+		if ids == nil || want[it.ID] {
+			size += it.Size
+			keys[it.Orig] = true
 		}
+	}
+	a.emptying = true
+	wait := a.startDump(keys)
+	start, bin := time.Now(), a.bin
+	go func() {
+		freed, err := bin.Empty(ids)
+		left := bin.List()
+		a.onMain(func() {
+			// the animation runs while the files go; whichever ends last finishes
+			a.after(max(0, wait-time.Since(start)), func() { a.emptied(freed, size, left, err) })
+		})
+	}()
+}
+
+// emptied updates the screen once Empty has returned.
+func (a *app) emptied(freed, planned int64, left []trash.Item, err error) {
+	a.emptying = false
+	still := map[string]bool{}
+	for _, it := range left {
+		still[it.ID] = true
+	}
+	for id := range a.trashed {
+		if !still[id] {
+			delete(a.trashed, id)
+		}
+	}
+	a.freedTotal += freed
+	a.disk.ok = false // re-read free space
+	f := &a.binS
+	f.landed = map[string]time.Time{}
+	if err != nil {
+		a.toast(ui.Toast{Title: T("部分项目未能删除"), Description: firstLine(err.Error()), Type: "error"})
+	}
+	back := time.Duration(0)
+	if a.trashFX() {
+		f.doneT0, f.bumpT0 = a.now, a.now
+		f.freed, f.freedT = Tf("已释放 %s", fmtSize(min(freed, planned))), a.now
+		back = 900 * time.Millisecond
+	}
+	if len(left) > 0 {
+		return // what was kept stays on view
+	}
+	a.after(back, func() {
 		if a.scene == sceneTrash {
 			a.goScene(sceneBrowse)
 		}

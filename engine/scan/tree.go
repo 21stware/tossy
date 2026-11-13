@@ -103,6 +103,16 @@ func (t *Tree) Children(i int32, dst []int32) []int32 {
 	return dst
 }
 
+// Child finds the child of i named name (exact match), or None.
+func (t *Tree) Child(i int32, name string) int32 {
+	for c := t.Nodes[i].First; c != None; c = t.Nodes[c].Next {
+		if t.nameEq(c, name) {
+			return c
+		}
+	}
+	return None
+}
+
 // Find resolves an absolute path to a node index, or None.
 func (t *Tree) Find(path string) int32 {
 	path = filepath.Clean(path)

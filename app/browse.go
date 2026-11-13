@@ -14,27 +14,60 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/fanfree/fanfree/engine/gitrepo"
 	"github.com/fanfree/fanfree/engine/habit"
 	"github.com/fanfree/fanfree/engine/safety"
 	"github.com/fanfree/fanfree/engine/scan"
 )
 
-// The browse scene: the folder in focus as a list, and the selection in detail.
+// The browse scene: one panel that shows the folder in focus as a list, or, with a file
+// selected, that file in detail. The two are drawers: the detail slides in from the right
+// over the list's way out to the left, and back.
 
 func (a *app) browsePanel(c *ui.Context) {
 	pal := a.pal
-	ui.Column(c.Key("browse")).Grow(1).Shrink(1).Children(func() {
-		a.listHeader(c)
-		a.throwNode = scan.None
-		if a.t == nil {
-			ui.Box(c).Grow(1)
-		} else {
-			rows := a.children()
-			a.list.Key = func(i int) any { return rows[i] }
-			ui.List(c.Key("list"), &a.list, len(rows), func(i int) { a.row(c, rows[i], i) }).Grow(1).Shrink(1).Padding(2, 0, 6, 0).Children(func() {
-				if len(rows) == 0 {
-					ui.Text(c, "此文件夹为空").TextColor(pal.t3).FontSize(12.5).Padding(24).AlignSelf(ui.Center)
+	a.throwNode = scan.None
+	on := a.fileSel()
+	if on {
+		a.detNode = a.selected
+	}
+	if on != a.fileOn {
+		a.fileOn, a.fileT0 = on, a.now
+	}
+	k := float32(easeStd(a.progress(a.fileT0, 0, 300*time.Millisecond)))
+	w := max(a.wL, 160)
+	lx, dx := -w*(1-k), w*k // back to the list
+	if a.fileOn {
+		lx, dx = -w*k, w*(1-k)
+	}
+	ui.Box(c.Key("browse")).Grow(1).Shrink(1).Clip().Children(func() {
+		if !a.fileOn || k < 1 {
+			ui.Column(c.Key("blist")).Absolute().Top(0).Left(0).Fill().Translate(lx, 0).Children(func() {
+				a.listHeader(c)
+				a.focusInfo(c)
+				if a.t == nil {
+					ui.Box(c).Grow(1)
+					return
 				}
+				rows := a.children()
+				a.list.Key = func(i int) any { return rows[i] }
+				ui.List(c.Key("list"), &a.list, len(rows), func(i int) { a.row(c, rows[i], i) }).Grow(1).Shrink(1).Padding(2, 0, 6, 0).Children(func() {
+					if len(rows) == 0 {
+						ui.Text(c, T("此文件夹为空")).TextColor(pal.t3).FontSize(12.5).Padding(24).AlignSelf(ui.Center)
+					}
+				})
+			})
+		}
+		if (a.fileOn || k < 1) && a.t != nil && a.t.Attached(a.detNode) {
+			ui.Column(c.Key("bdet")).Absolute().Top(0).Left(0).Fill().Translate(dx, 0).Children(func() {
+				ui.Row(c.Key("dback")).Padding(14, 16, 0, 10).AlignItems(ui.Center).DragWindow().Children(func() {
+					b := a.btn(c.Key("back"), a.name(a.focus), btnGhost, true, func() { icon(c, icoBack, 15, pal.t2, 2) }).
+						Tooltip(T("返回列表（Esc）")).Shrink(1)
+					if b.Clicked() && a.fileOn {
+						a.selected = a.focus
+					}
+				})
+				a.detail(c)
 			})
 		}
 	})
@@ -48,7 +81,7 @@ func (a *app) listHeader(c *ui.Context) ui.Element {
 	}
 	return ui.Row(c.Key("lh")).Padding(14, pl, 8, pl).Gap(8).AlignItems(ui.Center).DragWindow().Children(func() {
 		if a.t != nil && a.focus != 0 {
-			if a.btn(c.Key("lup"), "", btnGhost, true, func() { icon(c, icoUp, 15, pal.t2, 2) }).Tooltip("返回上级（Esc）").Clicked() && a.anal == nil {
+			if a.btn(c.Key("lup"), "", btnGhost, true, func() { icon(c, icoUp, 15, pal.t2, 2) }).Tooltip(T("返回上级（Esc）")).Clicked() && a.anal == nil {
 				a.zoomTo(a.t.Nodes[a.focus].Parent)
 			}
 		}
@@ -62,7 +95,7 @@ func (a *app) listHeader(c *ui.Context) ui.Element {
 				return
 			}
 			ui.Text(c, a.name(a.focus)).FontSize(fs).FontWeight(600).SingleLine().Ellipsis("…")
-			ui.Text(c, fmtSize(a.t.Nodes[a.focus].Size)+" · "+fmtNum(int64(len(a.children())))+" 项").FontSize(12).TextColor(pal.t3).SingleLine()
+			ui.Text(c, fmtSize(a.t.Nodes[a.focus].Size)+" · "+nItems(int64(len(a.children())))).FontSize(12).TextColor(pal.t3).SingleLine()
 		}), a.slimT0, 0)
 	})
 }
@@ -119,10 +152,15 @@ func (a *app) row(c *ui.Context, n int32, i int) {
 			col = pal.t3
 		}
 		ui.Text(c, a.t.Name(n)).TextColor(col).SingleLine().Ellipsis("…").Grow(1).Shrink(1)
+		if dir && !slim {
+			if k := a.ev.Git(n); k == gitrepo.Repo || k == gitrepo.Worktree {
+				ui.Text(c, gitKindLabel(k)).FontSize(10.5).Font(pal.mono).TextColor(pal.t3).Padding(1, 5).Radius(4).Background(pal.hov).SingleLine().Shrink(0)
+			}
+		}
 		switch {
 		case slim:
 		case lv == safety.Safe:
-			ui.Text(c, "可清理").FontSize(11.5).TextColor(pal.level[safety.Safe]).SingleLine().Shrink(0)
+			ui.Text(c, T("可清理")).FontSize(11.5).TextColor(pal.level[safety.Safe]).SingleLine().Shrink(0)
 		case lv == safety.Protected:
 			lockIcon(c, 13, pal.t4)
 		}
@@ -160,9 +198,9 @@ func (a *app) row(c *ui.Context, n int32, i int) {
 			})
 		})
 		if lv == safety.Protected {
-			del.Tooltip("系统保护，禁止删除")
+			del.Tooltip(T("系统保护，禁止删除"))
 		} else {
-			del.Tooltip("移至" + trashName() + "（也可拖到" + trashName() + "）")
+			del.Tooltip(Tf("移至%s（也可拖到%s）", trashName(), trashName()))
 		}
 		if del.Clicked() && a.anal == nil {
 			a.selected = n
@@ -176,14 +214,13 @@ func (a *app) row(c *ui.Context, n int32, i int) {
 	// rows slide in after a folder change, one after another
 	if k := a.progress(a.rowsT0, time.Duration(min(i, 12))*9*time.Millisecond, 220*time.Millisecond); k < 1 {
 		e := float32(easeStd(k))
-		r.Opacity(e).Translate(a.rowsDx*(1-e), 0)
+		r.Translate(a.rowsDx*max(a.rightW, 160)*(1-e), 0)
 	}
 	// FLIP: after a delete, restore or re-sort, rows glide from where they were
 	if d, ok := a.flip[n]; ok && !a.flipT0.IsZero() {
 		if math.IsNaN(float64(d)) {
 			if k := a.progress(a.flipT0, 0, 200*time.Millisecond); k < 1 {
-				e := float32(easeOut(k))
-				r.Opacity(e).Scale(.98+.02*e, .98+.02*e)
+				r.Translate(max(a.rightW, 160)*(1-float32(easeOut(k))), 0)
 			}
 		} else if d != 0 {
 			if k := a.progress(a.flipT0, 0, 260*time.Millisecond); k < 1 {
@@ -201,10 +238,11 @@ func (a *app) row(c *ui.Context, n int32, i int) {
 		a.hover = n
 	}
 	if r.Clicked() {
-		a.selected = n
-	}
-	if r.DoubleClicked() && dir && nd.First != scan.None && a.anal == nil {
-		a.zoomTo(n)
+		if dir && nd.First != scan.None && a.anal == nil {
+			a.zoomTo(n)
+		} else {
+			a.selected = n
+		}
 	}
 	if r.RightClicked() {
 		a.selected = n
@@ -216,8 +254,16 @@ func (a *app) row(c *ui.Context, n int32, i int) {
 // ------------------------------------------------------------------------------------------
 // detail
 
+// bullet renders one of levelBullets; the one that names the trash is a format.
+func bullet(b string) string {
+	if strings.Contains(b, "%s") {
+		return Tf(b, trashName())
+	}
+	return T(b)
+}
+
 var levelBullets = [4][]string{
-	{"内容可自动重建或重新下载", "不包含个人创作数据", "移至" + trashName() + "后可随时还原"},
+	{"内容可自动重建或重新下载", "不包含个人创作数据", "移至%s后可随时还原"},
 	{"可能包含应用配置或本地状态", "删除前请确认是否仍在使用"},
 	{"可能包含无法恢复的个人文件", "请确认已有备份再删除"},
 	{"操作系统或系统服务依赖", "FanFree 禁止删除此项"},
@@ -231,57 +277,13 @@ func (a *app) habitOf(n int32) *habit.Match {
 	return a.habit.Match(habit.Subject{Path: a.t.Path(n), Dir: nd.IsDir(), Size: nd.Size, AgeDays: a.ev.AgeDays(n)})
 }
 
-// detailSummary is the detail panel at rest: the selection's name, size and verdict in two
-// lines. A press on it brings the full detail.
-func (a *app) detailSummary(c *ui.Context) {
-	pal := a.pal
-	if a.t == nil {
-		return
-	}
-	n := a.selected
-	if n == scan.None || !a.t.Attached(n) {
-		n = a.focus
-	}
-	nd := &a.t.Nodes[n]
-	lv := a.verdict(n).Level()
-	ui.Column(c.Key("dsum")).Padding(13, 14, 12, 18).Gap(5).Cursor(ui.CursorPointer).Children(func() {
-		a.rise(ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, a.name(n)).FontSize(13).FontWeight(600).SingleLine().Ellipsis("…").Grow(1).Shrink(1)
-			icon(c, icoChevron, 12, pal.t4, 1.8)
-		}), a.detT0, 0)
-		a.rise(ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, fmtSize(nd.Size)).FontSize(18).FontWeight(600).SingleLine().Shrink(0)
-			if n != 0 {
-				ui.Box(c).Size(6, 6).Radius(3).Background(pal.level[lv]).Shrink(0)
-				ui.Text(c, levelNames[lv]).FontSize(11.5).TextColor(pal.level[lv]).SingleLine().Shrink(1).Ellipsis("…")
-			}
-		}), a.detT0, 1)
-	})
-}
-
-// detailLine is the detail squeezed to one line (the trash has the room): name and size.
-func (a *app) detailLine(c *ui.Context) {
-	pal := a.pal
-	if a.t == nil {
-		return
-	}
-	n := a.selected
-	if n == scan.None || !a.t.Attached(n) {
-		n = a.focus
-	}
-	a.rise(ui.Row(c.Key("dline")).Height(detailMin).Padding(0, 14, 0, 18).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer).Children(func() {
-		ui.Text(c, a.name(n)).FontSize(13).FontWeight(600).SingleLine().Ellipsis("…").Grow(1).Shrink(1)
-		ui.Text(c, fmtSize(a.t.Nodes[n].Size)).FontSize(12).Font(pal.mono).TextColor(pal.t3).SingleLine().Shrink(0)
-	}), a.detT0, 0)
-}
-
 func (a *app) detail(c *ui.Context) ui.Element {
 	pal := a.pal
 	return ui.Scroll(c.Key("detail")).Grow(1).Shrink(1).MinHeight(0).Children(func() {
 		if a.t == nil {
 			return
 		}
-		n := a.selected
+		n := a.detNode
 		if n == scan.None || !a.t.Attached(n) {
 			n = a.focus
 		}
@@ -293,21 +295,21 @@ func (a *app) detail(c *ui.Context) ui.Element {
 			a.rise(ui.Column(c).Gap(3).Children(func() {
 				ui.Text(c, a.name(n)).FontSize(14).FontWeight(600).SingleLine().Ellipsis("…")
 				ui.Text(c, a.displayPath(n)).FontSize(11).Font(pal.mono).TextColor(pal.t4).SingleLine().TruncateMiddle()
-			}), a.detT0, 0)
+			}), time.Time{}, 0) // the whole detail slides as a drawer
 			a.rise(ui.Row(c).Gap(10).AlignItems(ui.End).Children(func() {
 				ui.Text(c, fmtSize(nd.Size)).FontSize(26).FontWeight(600).SingleLine().Shrink(0)
 				meta := []string{}
 				if dir {
-					meta = append(meta, fmtNum(int64(nd.Count-1))+" 项")
+					meta = append(meta, nItems(int64(nd.Count-1)))
 				} else {
-					meta = append(meta, cats[catOf(a.t.Name(n))].l)
+					meta = append(meta, T(cats[catOf(a.t.Name(n))].l))
 				}
-				meta = append(meta, "修改于"+ageStr(a.ev.AgeDays(n)))
+				meta = append(meta, Tf("修改于%s", ageStr(a.ev.AgeDays(n))))
 				if a.disk.ok && a.disk.total > 0 {
-					meta = append(meta, "占磁盘 "+diskPct(nd.Size, a.disk.total))
+					meta = append(meta, Tf("占磁盘 %s", diskPct(nd.Size, a.disk.total)))
 				}
 				ui.Text(c, strings.Join(meta, " · ")).FontSize(12).TextColor(pal.t3).SingleLine().Shrink(1).Ellipsis("…").Padding(0, 0, 5, 0)
-			}), a.detT0, 1)
+			}), time.Time{}, 1) // the whole detail slides as a drawer
 			// verdict
 			a.rise(ui.Row(c).Gap(9).AlignItems(ui.Start).Children(func() {
 				dc := pal.level[lv]
@@ -316,25 +318,25 @@ func (a *app) detail(c *ui.Context) ui.Element {
 				}
 				ui.Box(c).Size(7, 7).Radius(3.5).Background(dc).Margin(6, 0, 0, 0).Shrink(0)
 				ui.RichText(c).Grow(1).Shrink(1).FontSize(12.5).Children(func() {
-					title, col, reason := levelTitles[lv], pal.level[lv], v.Reason()
+					title, col, reason := T(levelTitles[lv]), pal.level[lv], T(v.Reason())
 					if n == 0 {
-						title, col, reason = "扫描范围", pal.text, "当前分析的根目录：点击扇区进入子目录，点击中心返回上一级"
+						title, col, reason = T("扫描范围"), pal.text, T("当前分析的根目录：点击扇区进入子目录，点击中心返回上一级")
 					}
 					ui.Text(c, title+" ").FontWeight(600).TextColor(col)
 					ui.Text(c, reason).TextColor(pal.t2)
 				})
-			}), a.detT0, 2)
+			}), time.Time{}, 2) // the whole detail slides as a drawer
 			if m := a.habitOf(n); m != nil {
 				ui.RichText(c).FontSize(12).Children(func() {
-					ui.Text(c, "依据你的习惯").FontWeight(600).TextColor(pal.level[safety.Review])
-					ui.Text(c, fmt.Sprintf(" · 你曾手动删除 %d 个 %s，自动清理会包含此项", m.D, m.Label)).TextColor(pal.t2)
+					ui.Text(c, T("依据你的习惯")).FontWeight(600).TextColor(pal.level[safety.Review])
+					ui.Text(c, Tf(" · 你曾手动删除 %d 个 %s，自动清理会包含此项", m.D, habitLabel(m.Label))).TextColor(pal.t2)
 				})
 			}
-			title := "判断依据"
+			title := T("判断依据")
 			if n == 0 {
 				title = ""
 			} else if v.Rule.Tag != "" {
-				title += " · " + v.Rule.Tag
+				title += " · " + T(v.Rule.Tag)
 			}
 			if title != "" {
 				a.fold(c, "why", title, &a.whyOpen, func() {
@@ -342,7 +344,7 @@ func (a *app) detail(c *ui.Context) ui.Element {
 						for i, b := range levelBullets[lv] {
 							ui.Row(c.Key(i)).Gap(8).AlignItems(ui.Center).Children(func() {
 								ui.Box(c).Size(4, 4).Radius(2).Background(pal.t4)
-								ui.Text(c, b).FontSize(12).TextColor(pal.t2)
+								ui.Text(c, bullet(b)).FontSize(12).TextColor(pal.t2)
 							})
 						}
 					})
@@ -352,7 +354,7 @@ func (a *app) detail(c *ui.Context) ui.Element {
 				a.composition(c, n)
 			} else {
 				open := !a.prevShut
-				a.fold(c, "prev", "预览", &open, func() { a.preview(c, n) })
+				a.fold(c, "prev", T("预览"), &open, func() { a.preview(c, n) })
 				a.prevShut = !open
 			}
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(4, 0, 0, 0).Children(func() {
@@ -360,15 +362,15 @@ func (a *app) detail(c *ui.Context) ui.Element {
 					mygo.Shell.ShowItemInFolder(a.t.Path(n))
 				}
 				if dir && n != a.focus && nd.First != scan.None {
-					if a.btn(c.Key("open"), "打开", btnPlain, false, nil).Clicked() {
+					if a.btn(c.Key("open"), T("打开"), btnPlain, false, nil).Clicked() {
 						a.zoomTo(n)
 					}
 				}
 				ui.Spacer(c)
 				ok, why := a.canTrash(n)
-				label := "移至" + trashName()
+				label := Tf("移至%s", trashName())
 				if lv == safety.Protected && n != 0 {
-					label = "受系统保护"
+					label = T("受系统保护")
 				}
 				b := a.btn(c.Key("del"), label, btnSolid, false, nil).Disabled(!ok || a.anal != nil)
 				if !ok && why != "" {
@@ -516,7 +518,7 @@ func (a *app) composition(c *ui.Context, n int32) {
 	if len(ks) == 0 {
 		return
 	}
-	ui.Box(c.Key("compbar")).Height(4).Radius(2).Clip().Tooltip("内容构成").Draw(func(p *ui.Painter, r ui.Rect) {
+	ui.Box(c.Key("compbar")).Height(4).Radius(2).Clip().Tooltip(T("内容构成")).Draw(func(p *ui.Painter, r ui.Rect) {
 		x := r.X
 		for _, k := range ks {
 			w := r.W * float32(cc.sums[k]) / float32(tot)
@@ -524,7 +526,7 @@ func (a *app) composition(c *ui.Context, n int32) {
 			x += w
 		}
 	})
-	a.fold(c, "comp", "构成与最大的文件", &a.compOpen, func() {
+	a.fold(c, "comp", T("构成与最大的文件"), &a.compOpen, func() {
 		line := func(key any, col ui.Color, name string, size int64) ui.Element {
 			return ui.Row(c.Key(key)).Gap(8).AlignItems(ui.Center).Height(22).Padding(0, 4).Radius(5).Children(func() {
 				ui.Box(c).Size(7, 7).Radius(3.5).Background(col).Shrink(0)
@@ -534,10 +536,10 @@ func (a *app) composition(c *ui.Context, n int32) {
 		}
 		ui.Column(c).Gap(0).Children(func() {
 			for i, k := range ks[:min(6, len(ks))] {
-				line(fmt.Sprint("k", i), cats[k].c, cats[k].l, cc.sums[k])
+				line(fmt.Sprint("k", i), cats[k].c, T(cats[k].l), cc.sums[k])
 			}
 			if len(cc.top) > 0 {
-				ui.Text(c, "最大的文件").FontSize(11).TextColor(pal.t4).Padding(8, 4, 3, 4)
+				ui.Text(c, T("最大的文件")).FontSize(11).TextColor(pal.t4).Padding(8, 4, 3, 4)
 				for i, f := range cc.top {
 					r := line(fmt.Sprint("f", i), cats[catOf(a.t.Name(f))].c, a.t.Name(f), a.t.Nodes[f].Size).Cursor(ui.CursorPointer)
 					if r.Hovered() {
@@ -585,14 +587,14 @@ func (a *app) preview(c *ui.Context, n int32) {
 func readHead(path string) ([]string, string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, "无法读取：" + firstLine(err.Error())
+		return nil, Tf("无法读取：%s", firstLine(err.Error()))
 	}
 	defer f.Close()
 	buf := make([]byte, 1024)
 	k, _ := io.ReadFull(f, buf)
 	buf = buf[:k]
 	if k == 0 {
-		return nil, "空文件"
+		return nil, T("空文件")
 	}
 	if isText(buf) {
 		s := strings.ReplaceAll(string(buf), "\r\n", "\n")

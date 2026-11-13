@@ -62,7 +62,7 @@ func runningApps() []string {
 	return names
 }
 
-// appsUsing returns why path is in use by one of the running apps, or "".
+// appsUsing names the running app that has path in use, or "".
 func appsUsing(path string, procs []string) string {
 	lp := strings.ToLower(path)
 	for _, ac := range appCaches {
@@ -78,7 +78,7 @@ func appsUsing(path string, procs []string) string {
 		}
 		for _, p := range procs {
 			if strings.Contains(p, ac.app) {
-				return ac.label + " 正在运行"
+				return ac.label
 			}
 		}
 	}
@@ -104,6 +104,10 @@ func newestWrite(t *scan.Tree, i int32) uint32 {
 	return m
 }
 
+// recentWrite is the in-use reason of an item written to a moment ago; any other reason is
+// the name of the app that holds it.
+const recentWrite = "\x00write"
+
 // recentWrites marks items written within window. It walks the tree and runs on the main thread.
 func recentWrites(t *scan.Tree, items []cleanItem, window time.Duration, now time.Time) map[int32]string {
 	out := map[int32]string{}
@@ -113,12 +117,7 @@ func recentWrites(t *scan.Tree, items []cleanItem, window time.Duration, now tim
 	cut := uint32(now.Add(-window).Unix())
 	for _, it := range items {
 		if m := newestWrite(t, it.node); m >= cut {
-			ago := now.Sub(time.Unix(int64(m), 0))
-			if ago < time.Minute {
-				out[it.node] = "刚刚有写入"
-			} else {
-				out[it.node] = fmtFloat1(ago.Minutes()) + " 分钟前有写入"
-			}
+			out[it.node] = recentWrite
 		}
 	}
 	return out

@@ -127,8 +127,8 @@ func (a *app) instrMech(p *ui.Painter, r ui.Rect) {
 func (a *app) instrBlueprint(p *ui.Painter, r ui.Rect) {
 	s, ink := &a.sun, a.pal.ink
 	var cl ui.Path
-	cl.MoveTo(r.X+10, s.cy).LineTo(r.X+r.W-10, s.cy)
-	cl.MoveTo(s.cx, r.Y+10).LineTo(s.cx, r.Y+r.H-10)
+	cl.MoveTo(r.X+21, s.cy).LineTo(r.X+r.W-21, s.cy)
+	cl.MoveTo(s.cx, r.Y+21).LineTo(s.cx, r.Y+r.H-21)
 	cl.Dash(0, 18, 4, 3, 4)
 	p.StrokePath(&cl, .8, ink.Alpha(.35))
 	// radius dimension at 45° below right, with arrowheads and the total size
@@ -157,7 +157,8 @@ func (a *app) instrBlueprint(p *ui.Painter, r ui.Rect) {
 		a.monoText(p, s.cx+3, y-6, fmt.Sprintf("R%d", i), 8, ink.Alpha(.5))
 	}
 	// title block
-	tb := ui.Rect{X: r.X + r.W - 236, Y: r.Y + r.H - 70, W: 222, H: 58}
+	tb := ui.Rect{X: r.X + r.W - 15 - 222, Y: r.Y + r.H - 15 - 58, W: 222, H: 58} // in the sheet's corner
+	p.Fill(tb, a.pal.bg, 0)
 	var box ui.Path
 	box.MoveTo(tb.X, tb.Y).LineTo(tb.X+tb.W, tb.Y).LineTo(tb.X+tb.W, tb.Y+tb.H).LineTo(tb.X, tb.Y+tb.H).Close()
 	box.MoveTo(tb.X, tb.Y+22).LineTo(tb.X+tb.W, tb.Y+22)
@@ -194,28 +195,15 @@ func (a *app) instrTerminal(p *ui.Painter, r ui.Rect) {
 	p.StrokePath(&br, 1.2, ink.Alpha(.6))
 	a.monoText(p, r.X+24, r.Y+20, fmt.Sprintf("[ SECTORS %d ] [ DEPTH %d ] [ %s ]", a.arcCount, a.depth(a.focus), a.modeName()), 10.5, ink.Alpha(.75))
 	line := "> du -sh " + clipText(p, a.t.Path(a.focus), r.W*.55, 10.5, 400) + "  " + strings.ToUpper(fmtSize(a.t.Nodes[a.focus].Size))
+	line, done := a.typed(p, line)
 	a.monoText(p, r.X+24, r.Y+r.H-30, line, 10.5, ink.Alpha(.85))
 	w, _ := p.MeasureText(0, ui.Span{Text: line, Size: 10.5, Font: "monospace"})
-	if a.now.UnixMilli()/530%2 == 0 || !a.pal.motion {
+	if !done || a.now.UnixMilli()/530%2 == 0 || !a.pal.motion { // solid while typing
 		p.Fill(ui.Rect{X: r.X + 28 + w, Y: r.Y + r.H - 30, W: 7, H: 13}, ink.Alpha(.85), 0)
 	}
 	if a.pal.motion {
-		p.AnimationFrameRate(4)
+		p.After(time.Duration(530-a.now.UnixMilli()%530) * time.Millisecond)
 	}
-}
-
-// instrSwiss: oversized number, a hairline rule and a numbered caption, set flush left.
-func (a *app) instrSwiss(p *ui.Painter, r ui.Rect) {
-	ink := a.pal.ink
-	sz := fmtSize(a.t.Nodes[a.focus].Size)
-	p.RichText(r.X+22, r.Y+14, 0, ui.Span{Text: sz, Size: 34, Weight: 800, Color: ink})
-	var rule ui.Path
-	rule.MoveTo(r.X+22, r.Y+60).LineTo(r.X+190, r.Y+60)
-	p.StrokePath(&rule, 2, a.pal.accent)
-	cap := fmt.Sprintf("%02d — %s", a.depth(a.focus)+1, a.name(a.focus))
-	p.RichText(r.X+22, r.Y+68, 0, ui.Span{Text: clipText(p, cap, 220, 12, 700), Size: 12, Weight: 700, Color: ink})
-	sub := fmt.Sprintf("%d 个扇区 · %s 个文件", len(a.sun.arcs), fmtNum(a.t.Stats.Files))
-	p.RichText(r.X+22, r.Y+86, 0, ui.Span{Text: sub, Size: 11, Color: a.pal.t3})
 }
 
 // instrTE: a knob scale 0–10 around the dial, an orange LED and small-caps labels.
@@ -253,7 +241,7 @@ func (a *app) instrTE(p *ui.Painter, r ui.Rect) {
 func (a *app) paintAnalysis(p *ui.Painter, r ui.Rect) {
 	s, pal := &a.sun, a.pal
 	c1, amb := pal.accent, pal.amber
-	if pal.instr == instrNone || pal.art == artSwiss || pal.art == artInk {
+	if pal.instr == instrNone || pal.art == artInk {
 		amb = pal.level[safety.Review]
 	}
 	rb := s.rad + 12

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+
+	"github.com/fanfree/fanfree/engine/scan"
 )
 
 // fixture builds a small home-like tree with real (allocated) bytes.
@@ -167,13 +169,21 @@ func TestViewFlow(t *testing.T) {
 		t.Errorf("list focus: pf=%d w=%v (was %v)", a.pf, a.rightW, narrow)
 	}
 	shot(t, tt, "4-listfocus")
-	tt.ClickAt(a.winW-a.wD+30, a.detailY()+20)
+	// a file opens its detail in the same panel; Esc slides back to the list
+	a.selected = firstFile(a)
+	tt.Frame()
 	tt.Advance(time.Second)
 	tt.Frame()
-	if a.pf != pfDetail {
-		t.Errorf("detail focus: pf=%d", a.pf)
+	if !a.fileOn || a.pf != pfList {
+		t.Errorf("file detail: on=%v pf=%d", a.fileOn, a.pf)
 	}
-	shot(t, tt, "4b-detailfocus")
+	shot(t, tt, "4b-detail")
+	tt.Key(0, ui.KeyEscape)
+	tt.Advance(time.Second)
+	tt.Frame()
+	if a.fileOn {
+		t.Error("Esc kept the detail")
+	}
 	tt.ClickAt(30, 400) // the chart's blank side gives the room back
 	tt.Advance(time.Second)
 	tt.Frame()
@@ -304,7 +314,7 @@ func TestViewFlow(t *testing.T) {
 	tt.Advance(time.Second)
 	tt.Frame()
 	shot(t, tt, "9b-empty")
-	if err := tt.Click("永久删除"); err != nil {
+	if err := tt.Click("清空"); err != nil {
 		t.Fatal(err, tt.Texts())
 	}
 	tt.Advance(200 * time.Millisecond)
@@ -324,17 +334,22 @@ func TestViewFlow(t *testing.T) {
 	if !a.showSettings {
 		t.Error("⌘, did not open the settings")
 	}
-	tt.Advance(time.Second)
-	tt.Frame()
-	if !tt.HasText("减少动态效果") {
-		t.Errorf("settings: %v", tt.Texts())
+	st := ui.NewTester(a.settingsView, 820, 580) // its own window
+	st.Frame()
+	if !st.HasText("减少动态效果") {
+		t.Errorf("settings: %v", st.Texts())
 	}
-	shot(t, tt, "10-settings")
+	shot(t, st, "10-settings")
 	// classic theme, picked in settings (the footer switch is gone)
-	if err := tt.Click("经典"); err != nil {
+	if err := st.Click("经典"); err != nil {
 		t.Fatal(err)
 	}
-	tt.Click("完成")
+	st.Frame()
+	st.Key(0, ui.KeyEscape)
+	st.Frame()
+	if a.showSettings {
+		t.Error("Esc did not close the settings")
+	}
 	tt.Advance(time.Second)
 	tt.Frame()
 	shot(t, tt, "11-classic")
@@ -398,7 +413,7 @@ func TestSizes(t *testing.T) {
 	for _, sz := range []struct {
 		name string
 		w, h int
-	}{{"compact", 980, 640}, {"regular", 1280, 820}, {"wide", 1720, 1040}} {
+	}{{"narrow", 720, 620}, {"compact", 980, 640}, {"regular", 1280, 820}, {"wide", 1720, 1040}} {
 		a := loaded(t)
 		tt := ui.NewTester(a.view, sz.w, sz.h)
 		tt.Advance(2 * time.Second)
@@ -409,7 +424,7 @@ func TestSizes(t *testing.T) {
 		tt.Advance(time.Second)
 		tt.Frame()
 		shot(t, tt, "z-"+sz.name+"-2list")
-		a.focusPanel(pfDetail)
+		a.selected = firstFile(a)
 		tt.Frame()
 		tt.Advance(time.Second)
 		tt.Frame()
@@ -420,6 +435,22 @@ func TestSizes(t *testing.T) {
 		tt.Frame()
 		shot(t, tt, "z-"+sz.name+"-4trash")
 	}
+}
+
+// firstFile is a file among the focus's children.
+func firstFile(a *app) int32 {
+	for _, n := range a.children() {
+		if !a.t.Nodes[n].IsDir() {
+			return n
+		}
+	}
+	for _, n := range a.children() {
+		a.zoomTo(n)
+		if f := firstFile(a); f != scan.None {
+			return f
+		}
+	}
+	return scan.None
 }
 
 func (a *app) arcPointOf(h *arc) (float32, float32) {
@@ -496,4 +527,68 @@ func TestIcon(t *testing.T) {
 	}
 	defer f.Close()
 	png.Encode(f, img)
+}
+
+// TestZoomColours drills into the biggest folder in every style and checks that every sector
+// keeps its colour: through the zoom and at the new level.
+func TestZoomColours(t *testing.T) {
+	a := loaded(t)
+	tt := ui.NewTester(a.view, 1280, 820)
+	a.keepMode = true
+	for i, p := range palettes {
+		if !p.motion {
+			continue
+		}
+		a.palIdx = i
+		a.mode = modeStructure
+		a.zoomTo(0)
+		tt.Advance(2 * time.Second)
+		tt.Frame()
+		var dir int32 = -1
+		for k := range a.sun.arcs {
+			h := &a.sun.arcs[k]
+			if h.ring == 1 && h.node >= 0 && !h.leaf && (dir < 0 || h.size > a.t.Nodes[dir].Size) {
+				dir = h.node
+			}
+		}
+		if dir < 0 {
+			t.Fatalf("%s: no folder to drill into", p.name)
+		}
+		prev := map[int32]ui.Color{}
+		for k := range a.sun.arcs {
+			if h := &a.sun.arcs[k]; h.node >= 0 {
+				prev[h.node] = hsl(h.h, h.s, h.l, 1)
+			}
+		}
+		worst := 0
+		a.zoomTo(dir)
+		for f := 0; f < 40; f++ {
+			tt.Advance(16 * time.Millisecond)
+			tt.Frame()
+			cur := map[int32]ui.Color{}
+			for k := range a.sun.arcs {
+				h := &a.sun.arcs[k]
+				if h.node < 0 {
+					continue
+				}
+				c := hsl(h.h, h.s, h.l, 1)
+				cur[h.node] = c
+				if o, ok := prev[h.node]; ok {
+					d := max(absInt(int(c.R)-int(o.R)), absInt(int(c.G)-int(o.G)), absInt(int(c.B)-int(o.B)))
+					worst = max(worst, d)
+				}
+			}
+			prev = cur
+		}
+		if worst > 0 {
+			t.Errorf("%s: a sector's colour changed by %d/255 while drilling down", p.name, worst)
+		}
+	}
+}
+
+func absInt(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }

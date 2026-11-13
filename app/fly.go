@@ -174,7 +174,8 @@ func (a *app) throwOne(src source, its []cleanItem, keys []string, delay time.Du
 	if src.c != (ui.Color{}) {
 		c0 = src.c
 	}
-	b := ball{d: d, endS: 2 * r / d, c0: c0, c1: c1, keys: keys}
+	_, _, hs, _, _ := f.hero()
+	b := ball{d: d, endS: 2 * r * hs / d, c0: c0, c1: c1, keys: keys}
 	morphT := time.Duration(0)
 	s := &a.sun
 	switch {
@@ -197,11 +198,11 @@ func (a *app) throwOne(src source, its []cleanItem, keys []string, delay time.Du
 	default:
 		b.sx, b.sy, b.pop = src.x, src.y, !src.ball
 	}
-	b.tx, b.ty = ox+T.w/2, oy+T.b-10
+	b.tx, b.ty = f.toHero(ox+T.w/2, oy+T.b-10)
 	if ok {
-		b.tx, b.ty = ox+pos.x, oy+pos.y
+		b.tx, b.ty = f.toHero(ox+pos.x, oy+pos.y)
 	}
-	b.hy = oy + T.m - 28
+	_, b.hy = f.toHero(0, oy+T.m-28)
 	b.mx = (b.sx+b.tx)/2 + (rand.Float32()-.5)*90
 	b.my = min(b.sy, b.hy) - 50 - rand.Float32()*80
 	dist := math.Hypot(float64(b.tx-b.sx), float64(b.ty-b.sy))
@@ -217,6 +218,7 @@ func (a *app) throwOne(src source, its []cleanItem, keys []string, delay time.Du
 func (a *app) paintFly(p *ui.Painter) {
 	f := &a.fly
 	now := a.now
+	ink := a.ink()
 	// shards: scale 1 → 1.05 (30%) → .08, fading to .2, 210ms
 	keepS := f.shards[:0]
 	for _, s := range f.shards {
@@ -235,7 +237,12 @@ func (a *app) paintFly(p *ui.Painter) {
 				sc, op = 1.05+(.08-1.05)*u, 1-.8*u
 			}
 		}
-		p.Transform(ui.Scaling(sc, sc), s.ox, s.oy, func() { p.FillPath(s.path, s.c.Alpha(op)) })
+		p.Transform(ui.Scaling(sc, sc), s.ox, s.oy, func() {
+			p.FillPath(s.path, s.c.Alpha(op))
+			if ink {
+				p.StrokePath(s.path, 1.2, a.pal.ink.Alpha(op))
+			}
+		})
 	}
 	f.shards = keepS
 	// list rows fold into the ball, 170ms
@@ -246,7 +253,7 @@ func (a *app) paintFly(p *ui.Painter) {
 			continue
 		}
 		keepM = append(keepM, m)
-		e := float32(bez(.4, 0, .2, 1, max(0, k)))
+		e := float32(ease(max(0, k)))
 		x := m.r.X + (m.x-m.d/2-m.r.X)*e
 		y := m.r.Y + (m.y-m.d/2-m.r.Y)*e
 		w := m.r.W + (m.d-m.r.W)*e
@@ -280,22 +287,35 @@ func (a *app) paintFly(p *ui.Painter) {
 		if b.pop {
 			f0 = .08
 		}
-		var x, y, sc, op float32 = b.sx, b.sy, 1, 1
-		c := b.c0
-		switch {
-		case b.pop && t < f0:
-			u := t / f0
-			y, sc, op = b.sy-4*u, .2+.9*u, u
-		case t < f1:
-			u := (t - f0) / (f1 - f0)
-			x, y, sc = quad(b.sx, b.mx, b.tx, u), quad(b.sy, b.my, b.hy, u), 1-.15*u
-		default:
-			u := (t - f1) / (1 - f1)
-			x, y = b.tx, b.hy+(b.ty-b.hy)*u*u
-			sc = .85 + (b.endS-.85)*u
-			c = b.c0.Mix(b.c1, u)
+		at := func(t float32) (x, y, sc, op float32, c ui.Color) {
+			x, y, sc, op, c = b.sx, b.sy, 1, 1, b.c0
+			switch {
+			case b.pop && t < f0:
+				u := t / f0
+				y, sc, op = b.sy-4*u, .2+.9*u, u
+			case t < f1:
+				u := (t - f0) / (f1 - f0)
+				x, y, sc = quad(b.sx, b.mx, b.tx, u), quad(b.sy, b.my, b.hy, u), 1-.15*u
+			default:
+				u := (t - f1) / (1 - f1)
+				x, y = b.tx, b.hy+(b.ty-b.hy)*u*u
+				sc = .85 + (b.endS-.85)*u
+				c = b.c0.Mix(b.c1, u)
+			}
+			return
 		}
-		if b.solo && t > f0 && t < f1 { // a short fading trail along the arc
+		x, y, sc, op, c := at(t)
+		if ink { // the panel has not quite let go of the last step: a faint ghost, then a fainter one
+			for i := 2; i >= 1; i-- {
+				gt := t - float32(i)*float32(inkStep)/float32(b.dur)
+				if gt <= 0 {
+					continue
+				}
+				gx, gy, gs, _, gc := at(gt)
+				a.paintBall(p, gx, gy, b.d/2*gs, gc, .3/float32(i))
+			}
+		}
+		if b.solo && !ink && t > f0 && t < f1 { // a short fading trail along the arc
 			for i := 1; i <= 4; i++ {
 				u := (t - f0 - float32(i)*.025) / (f1 - f0)
 				if u <= 0 {
@@ -308,6 +328,7 @@ func (a *app) paintFly(p *ui.Painter) {
 	}
 	f.balls = keepB
 	a.paintBinFront(p)
+	a.paintEmptyDone(p)
 	a.paintBallTip(p)
 	// "已释放 X" rises off the bin after an empty
 	if !bs.freedT.IsZero() {
@@ -315,7 +336,7 @@ func (a *app) paintFly(p *ui.Painter) {
 		if k >= 1 {
 			bs.freedT = time.Time{}
 		} else {
-			e := bez(0, 0, .58, 1, k)
+			e := easeStd(k)
 			var dy, op float64
 			if e < .25 {
 				dy, op = -40*e/.25, e/.25
@@ -336,31 +357,11 @@ func (a *app) paintFly(p *ui.Painter) {
 		a.frame = true
 	}
 	if a.frame {
-		p.AnimationFrame()
+		a.tick(p)
 	}
 }
 
 func quad(a, c, b, t float32) float32 { u := 1 - t; return u*u*a + 2*u*t*c + t*t*b }
-
-// emptyBin tips the pile out, then forgets it.
-func (a *app) startDump(size int64) {
-	f := &a.binS
-	if !a.motion() {
-		return
-	}
-	f.dump = f.dump[:0]
-	for _, e := range f.ents {
-		if b, ok := f.pile[e.key]; ok {
-			f.dump = append(f.dump, dumpBall{b, 18 + rand.Float32()*14, 0})
-		}
-	}
-	n := len(f.dump)
-	for i := range f.dump {
-		f.dump[i].delay = ms(float64(n-i)*3 + rand.Float64()*90)
-	}
-	f.dumpT0 = a.now
-	f.freed, f.freedT = "已释放 "+fmtSize(size), a.now
-}
 
 var _ = scan.None
 var _ trash.Source

@@ -16,9 +16,9 @@ func (m dirMover) trash(p string) (string, string, error) {
 func (dirMover) restore(it *Item) error { return os.Rename(it.Stored, it.Orig) }
 func (dirMover) purge(it *Item) error   { return removeAll(it.Stored) }
 
-func TestMoveRestoreEmpty(t *testing.T) {
+func TestMarkRestoreEmpty(t *testing.T) {
 	work, state, bin := t.TempDir(), t.TempDir(), t.TempDir()
-	t.Cleanup(func() { removeAll(work); removeAll(bin) })
+	t.Cleanup(func() { removeAll(work) })
 	b, err := open(state, dirMover{bin})
 	if err != nil {
 		t.Fatal(err)
@@ -40,8 +40,15 @@ func TestMoveRestoreEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(a); !os.IsNotExist(err) {
-		t.Fatal("original still present")
+	// a mark: the file stays where it is, nothing reaches the (fake) OS trash
+	if data, _ := os.ReadFile(a); string(data) != "hello" || ia.Stored != a {
+		t.Fatal("marking moved the file")
+	}
+	if ents, _ := os.ReadDir(bin); len(ents) != 0 {
+		t.Fatal("something reached the OS trash")
+	}
+	if _, err := b.Move(a, Meta{Size: 5}); err == nil {
+		t.Fatal("double mark must fail")
 	}
 	if b.Size() != 14 || len(b.List()) != 2 {
 		t.Fatalf("size %d list %d", b.Size(), len(b.List()))
@@ -51,7 +58,7 @@ func TestMoveRestoreEmpty(t *testing.T) {
 	if err != nil || len(b2.List()) != 2 {
 		t.Fatalf("reopen: %v %d", err, len(b2.List()))
 	}
-	// restore puts it back
+	// restore drops the mark
 	if _, err := b2.Restore(ia.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -61,26 +68,35 @@ func TestMoveRestoreEmpty(t *testing.T) {
 	if _, err := b2.Restore(ia.ID); err != ErrNotFound {
 		t.Fatal("double restore must fail")
 	}
-	// read-only directories round-trip too
-	if _, err := b2.Restore(im.ID); err != nil {
-		t.Fatal("restore read-only dir:", err)
-	}
-	if fi, _ := os.Stat(filepath.Join(work, "mod")); fi == nil || fi.Mode().Perm() != 0o555 {
-		t.Fatal("mode not preserved")
-	}
-	if im, err = b2.Move(filepath.Join(work, "mod"), Meta{Size: 9, Dir: true, Source: ByRule}); err != nil {
-		t.Fatal(err)
-	}
-	// empty removes read-only trees for good
+	// empty deletes marked items in place, read-only trees included, and leaves the rest
 	freed, err := b2.Empty(nil)
 	if err != nil || freed != 9 {
 		t.Fatalf("empty: %v freed %d", err, freed)
 	}
-	if _, err := os.Lstat(im.Stored); !os.IsNotExist(err) {
-		t.Fatal("stored copy survived Empty")
+	if _, err := os.Lstat(im.Orig); !os.IsNotExist(err) {
+		t.Fatal("marked dir survived Empty")
+	}
+	if _, err := os.Lstat(a); err != nil {
+		t.Fatal("unmarked file deleted")
 	}
 	if len(b2.List()) != 0 {
 		t.Fatal("journal not cleared")
+	}
+}
+
+// Journals from earlier versions hold items really moved into the OS trash.
+func TestLegacyMovedItems(t *testing.T) {
+	work, state, bin := t.TempDir(), t.TempDir(), t.TempDir()
+	a := filepath.Join(work, "a.txt")
+	stored := filepath.Join(bin, "a.txt")
+	os.WriteFile(stored, []byte("old"), 0o644)
+	b, _ := open(state, dirMover{bin})
+	b.items["x"] = &Item{ID: "x", Orig: a, Stored: stored, Size: 3}
+	if _, err := b.Restore("x"); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(a); string(data) != "old" {
+		t.Fatal("legacy restore")
 	}
 }
 
@@ -93,40 +109,5 @@ func TestUniqueName(t *testing.T) {
 	}
 	if got := filepath.Base(uniqueName(d, ".npm")); got != ".npm 2" {
 		t.Fatal(got)
-	}
-}
-
-// Real OS trash round-trip; opt-in because it touches the user's Trash.
-func TestOSTrashRoundTrip(t *testing.T) {
-	if os.Getenv("FANFREE_OS_TRASH") == "" {
-		t.Skip("set FANFREE_OS_TRASH=1")
-	}
-	home, _ := os.UserHomeDir()
-	p := filepath.Join(home, ".fanfree-trash-test.txt")
-	os.WriteFile(p, []byte("x"), 0o644)
-	b, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	it, err := b.Move(p, Meta{Size: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("stored at %s", it.Stored)
-	if _, err := os.Lstat(it.Stored); err != nil {
-		t.Fatal("not in trash:", err)
-	}
-	if _, err := b.Restore(it.ID); err != nil {
-		t.Fatal(err)
-	}
-	it, _ = b.Move(p, Meta{Size: 1})
-	if _, err := b.Empty([]string{it.ID}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Lstat(p); !os.IsNotExist(err) {
-		t.Fatal("original back?")
-	}
-	if _, err := os.Lstat(it.Stored); !os.IsNotExist(err) {
-		t.Fatal("trash copy survived")
 	}
 }

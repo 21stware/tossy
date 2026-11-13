@@ -95,10 +95,12 @@ type binState struct {
 	lidT0   time.Time
 	hot     bool // a drag hovers the bin
 
-	dumpT0 time.Time
-	dump   []dumpBall
-	freed  string
-	freedT time.Time
+	dumpT0  time.Time // the pile annihilates (see startDump)
+	dumpDur time.Duration
+	dump    []dumpBall
+	doneT0  time.Time // and the bin shines once it is empty
+	freed   string
+	freedT  time.Time
 
 	pileK   [3]int64
 	pile    map[string]pileBall
@@ -109,6 +111,7 @@ type binState struct {
 	// the hero bin of the trash scene: the dock bin grows to the column's bottom centre
 	heroSp         spring
 	heroK, heroS   float32
+	tsaH           float32 // the trash panel's action row, under the hero's stage
 	heroW          float32 // the hero's floor, wide enough for its tips
 	heroTX, heroTY float32 // target bottom centre in the window
 	textH          float32 // the dock's text column, last frame
@@ -117,14 +120,27 @@ type binState struct {
 	rowHL          string  // pile key of the trash row under the pointer
 	hlKey          string  // the lit ball, and when it lit: it swells over 150ms
 	hlT0           time.Time
+
+	// the trash size is one element shared by the dock and the trash panel's header: it flies
+	// between the two while the hero grows or shrinks back (see flySize)
+	bigR       ui.Rect // the header's size text, last frame
+	bigF       float32 // and its font size
+	szDX, szDY float32 // the dock's size text at rest, from the window's bottom-right corner
+	szSet      bool
 }
+
+// dockS is the bin's scale at rest in the dock: the tiers are drawn at 1 and zoomed by it.
+const dockS = 1.3
+
+// dockFS is the font size of the dock's trash size text.
+const dockFS = 26
 
 // hero is the zoom from the dock slot: the slot's bottom centre, the scale and the shift.
 func (f *binState) hero() (bx, by, s, dx, dy float32) {
 	T := &binTiers[f.tier]
 	bx, by = f.right-T.w/2, f.bottom
 	k := f.heroK
-	return bx, by, 1 + (f.heroS-1)*k, (f.heroTX - bx) * k, (f.heroTY - by) * k
+	return bx, by, dockS + (f.heroS-dockS)*k, (f.heroTX - bx) * k, (f.heroTY - by) * k
 }
 
 // toHero maps a point of the bin in its dock slot to where the hero bin shows it.
@@ -135,8 +151,8 @@ func (f *binState) toHero(x, y float32) (float32, float32) {
 
 type dumpBall struct {
 	pileBall
-	dy    float32
-	delay time.Duration
+	delay time.Duration // when it starts to go, from dumpT0
+	group bool          // in the finale, with all that is left
 }
 
 // trashEnts lists the journal (oldest first) plus moves still running.
@@ -182,7 +198,7 @@ func (a *app) syncBin(ents []pileEnt) {
 	t := tierFor(total, a.capacity())
 	if t != f.tier {
 		f.prevTier, f.tier = f.tier, t
-		if a.motion() && !a.now.IsZero() {
+		if a.trashFX() && !a.now.IsZero() {
 			f.tierT0 = a.now
 			if t > f.prevTier {
 				f.shoveT0 = a.now
@@ -272,60 +288,45 @@ func (a *app) lidAngle() float32 {
 		f.lidFrom, f.lidTo, f.lidT0 = f.lid, target, a.now
 	}
 	k := a.progress(f.lidT0, 0, 220*time.Millisecond)
-	f.lid = f.lidFrom + (f.lidTo-f.lidFrom)*float32(easeBack(k))
-	if !f.dumpT0.IsZero() {
-		d := float64(a.now.Sub(f.dumpT0)) / float64(550*time.Millisecond)
-		if d < 1 {
+	f.lid = f.lidFrom + (f.lidTo-f.lidFrom)*float32(easeStd(k))
+	if !f.dumpT0.IsZero() && f.dumpDur > 0 {
+		// open wide while the pile goes, shut as the last one does
+		d := a.now.Sub(f.dumpT0)
+		if d < f.dumpDur {
 			a.frame = true
-			// dumpLid: 0 → 70° by 20%, held to 60%, back by 100% (ease)
-			var v float64
-			switch {
-			case d < .2:
-				v = d / .2
-			case d < .6:
-				v = 1
-			default:
-				v = 1 - (d-.6)/.4
+			v := min(1, float64(d)/float64(180*time.Millisecond))
+			if rest := f.dumpDur - d; rest < 260*time.Millisecond {
+				v = min(v, float64(rest)/float64(260*time.Millisecond))
 			}
-			return float32(float64(f.lid) + (70-float64(f.lid))*ease(v))
+			return float32(float64(f.lid) + (55-float64(f.lid))*ease(v))
 		}
 	}
 	return f.lid
 }
 
-// bump is the landing squash: 0..1 peaking at 40%.
+// bump is the landing squash: 0..1 peaking at 40%, cubic out and cubic back, no rebound.
 func (a *app) binBump() float32 {
 	k := a.progress(a.binS.bumpT0, 0, 260*time.Millisecond)
 	if k >= 1 {
 		return 0
 	}
-	e := easeBounce(k)
-	if e < .4 {
-		return float32(e / .4)
+	if k < .4 {
+		return float32(easeStd(k / .4))
 	}
-	return float32((1 - e) / .6)
+	return float32(1 - ease((k-.4)/.6))
 }
 
-// tierScale is the tier-change morph: from the old size, overshoot, settle.
+// tierScale is the tier-change morph: from the old size straight to the new one on a cubic.
 func (a *app) tierScale() (sx, sy, op float32) {
 	f := &a.binS
 	k := a.progress(f.tierT0, 0, 380*time.Millisecond)
 	if k >= 1 {
 		return 1, 1, 1
 	}
-	e := float32(easeTier(k))
+	e := float32(easeStd(k))
 	P, T := &binTiers[f.prevTier], &binTiers[f.tier]
 	s0x, s0y := P.w/T.w, P.h/T.h
-	mx, my := float32(1.06), float32(.95)
-	if f.tier < f.prevTier {
-		mx, my = .97, 1.03
-	}
-	if e < .55 {
-		u := e / .55
-		return s0x + (mx-s0x)*u, s0y + (my-s0y)*u, .5 + .5*u
-	}
-	u := (e - .55) / .45
-	return mx + (1-mx)*u, my + (1-my)*u, 1
+	return s0x + (1-s0x)*e, s0y + (1-s0y)*e, .5 + .5*e
 }
 
 // ------------------------------------------------------------------------------------------
@@ -349,7 +350,9 @@ func (a *app) binInk() binInk {
 }
 
 // binXform runs fn in tier-local coordinates (origin at the tier's top-left), with the tier morph,
-// the landing bump and the hot swell applied about the bottom centre.
+// the landing bump, the hot swell and the hero zoom applied. They go into the pen, which the
+// drawing helpers apply to the geometry itself: the painter would draw the paths at their small
+// size and magnify the pixels, and the hero bin, at up to 3.4×, came out blurred.
 func (a *app) binXform(p *ui.Painter, fn func(ox, oy float32)) {
 	f := &a.binS
 	T := &binTiers[f.tier]
@@ -361,19 +364,67 @@ func (a *app) binXform(p *ui.Painter, fn func(ox, oy float32)) {
 	if f.hot && T.lids == 0 {
 		sx, sy = sx*1.06, sy*1.06
 	}
-	inner := func() {
-		p.Transform(ui.Translation(0, 1.5*b), 0, 0, func() {
-			p.Transform(ui.Scaling(sx, sy), ox+T.w/2, oy+T.h, func() { fn(ox, oy) })
-		})
-	}
-	if f.heroK <= 0 {
-		inner()
-		return
-	}
+	cx, cy := ox+T.w/2, oy+T.h
 	bx, by, s, dx, dy := f.hero()
-	p.Transform(ui.Translation(dx, dy), 0, 0, func() {
-		p.Transform(ui.Scaling(s, s), bx, by, inner)
-	})
+	X := func(x float32) float32 { return bx + s*(cx+sx*(x-cx)-bx) + dx }
+	Y := func(y float32) float32 { return by + s*(cy+sy*(y-cy)+1.5*b-by) + dy }
+	saved := pen
+	pen = affine{ax: X(1) - X(0), ay: Y(1) - Y(0), bx: X(0), by: Y(0)}
+	fn(ox, oy)
+	pen = saved
+}
+
+// affine maps the bin's drawing to the window: x·ax+bx, y·ay+by (no rotation).
+type affine struct{ ax, ay, bx, by float32 }
+
+// pen is the mapping the bin's drawing helpers apply; outside binXform it leaves points be.
+var pen = affine{ax: 1, ay: 1}
+
+func (t affine) pt(x, y float32) (float32, float32) { return t.ax*x + t.bx, t.ay*y + t.by }
+func (t affine) w(v float32) float32                { return v * (t.ax + t.ay) / 2 }
+func (t affine) rect(r ui.Rect) ui.Rect {
+	x, y := t.pt(r.X, r.Y)
+	return ui.Rect{X: x, Y: y, W: r.W * t.ax, H: r.H * t.ay}
+}
+
+// penPath builds a path through the pen.
+type penPath struct{ ui.Path }
+
+func (q *penPath) MoveTo(x, y float32) *penPath { q.Path.MoveTo(pen.pt(x, y)); return q }
+func (q *penPath) LineTo(x, y float32) *penPath { q.Path.LineTo(pen.pt(x, y)); return q }
+func (q *penPath) QuadTo(cx, cy, x, y float32) *penPath {
+	x1, y1 := pen.pt(cx, cy)
+	x2, y2 := pen.pt(x, y)
+	q.Path.QuadTo(x1, y1, x2, y2)
+	return q
+}
+func (q *penPath) CubeTo(c1x, c1y, c2x, c2y, x, y float32) *penPath {
+	x1, y1 := pen.pt(c1x, c1y)
+	x2, y2 := pen.pt(c2x, c2y)
+	x3, y3 := pen.pt(x, y)
+	q.Path.CubeTo(x1, y1, x2, y2, x3, y3)
+	return q
+}
+func (q *penPath) Close() *penPath { q.Path.Close(); return q }
+
+// Circle adds a circle, an ellipse if the pen stretches it.
+func (q *penPath) Circle(cx, cy, r float32) *penPath {
+	if pen.ax == pen.ay {
+		x, y := pen.pt(cx, cy)
+		q.Path.Circle(x, y, r*pen.ax)
+		return q
+	}
+	q.MoveTo(cx-r, cy).
+		CubeTo(cx-r, cy-kappa*r, cx-kappa*r, cy-r, cx, cy-r).
+		CubeTo(cx+kappa*r, cy-r, cx+r, cy-kappa*r, cx+r, cy).
+		CubeTo(cx+r, cy+kappa*r, cx+kappa*r, cy+r, cx, cy+r).
+		CubeTo(cx-kappa*r, cy+r, cx-r, cy+kappa*r, cx-r, cy).Close()
+	return q
+}
+
+// fillR fills a rounded rectangle through the pen.
+func fillR(p *ui.Painter, r ui.Rect, c ui.Color, radius float32) {
+	p.Fill(pen.rect(r), c, pen.w(radius))
 }
 
 // hoverBall finds the pile ball under a window point in the hero bin.
@@ -384,7 +435,7 @@ func (a *app) hoverBall(px, py float32) (pileEnt, bool) {
 	for i := len(f.ents) - 1; i >= 0; i-- {
 		e := f.ents[i]
 		b, ok := f.pile[e.key]
-		if !ok || f.inflight[e.key] > 0 {
+		if !ok || f.inflight[e.key] > 0 || !f.dumpT0.IsZero() {
 			continue
 		}
 		x, y := f.toHero(ox+b.x, oy+b.y)
@@ -417,7 +468,7 @@ func (a *app) paintBallTip(p *ui.Painter) {
 	_, _, s, _, _ := f.hero()
 	x, y := f.toHero(ox+b.x, oy+b.y)
 	name := clipText(p, filepath.Base(ent.key), 220, 12, 600)
-	info := fmtSize(ent.size) + " · " + levelTitles[max(0, min(3, ent.lv))]
+	info := fmtSize(ent.size) + " · " + T(levelTitles[max(0, min(3, ent.lv))])
 	w1, _ := p.MeasureText(0, ui.Span{Text: name, Size: 12, Weight: 600})
 	w2, _ := p.MeasureText(0, ui.Span{Text: info, Size: 10.5, Font: "monospace"})
 	w, h := max(w1, w2)+20, float32(42)
@@ -466,26 +517,11 @@ func (a *app) paintBinBack(p *ui.Painter, ents []pileEnt) {
 			p.FillPath(svgPath("M10 38H162L161 47H11Z", ox, oy), ui.RGBA(0, 0, 0, .25))
 		}
 		// the pile, clipped to the bin's inside
-		var clip ui.Path
+		var clip penPath
 		clip.MoveTo(ox+T.tx[0], oy+T.m-2).LineTo(ox+T.tx[1], oy+T.m-2).LineTo(ox+T.bx[1], oy+T.b).LineTo(ox+T.bx[0], oy+T.b).Close()
-		p.ClipPath(&clip, func() {
-			dumping := !f.dumpT0.IsZero()
-			if dumping {
-				d := a.now.Sub(f.dumpT0)
-				for _, b := range f.dump {
-					k := float32(d-b.delay) / float32(300*time.Millisecond)
-					if k >= 1 {
-						continue
-					}
-					k = max(0, k)
-					e := float32(bez(.5, 0, 1, .6, float64(k)))
-					s := 1 - .6*e
-					a.paintBall(p, ox+b.x, oy+b.y+b.dy*e, b.r*s, a.pal.level[b.lv], 1-e)
-				}
-				if d > 900*time.Millisecond {
-					f.dumpT0, f.dump = time.Time{}, nil
-				}
-				a.frame = true
+		p.ClipPath(&clip.Path, func() {
+			if !f.dumpT0.IsZero() {
+				a.paintZapBalls(p, ox, oy)
 				return
 			}
 			hl := f.hov
@@ -515,21 +551,15 @@ func (a *app) paintBinBack(p *ui.Painter, ents []pileEnt) {
 					if k >= 1 {
 						delete(f.landed, e.key)
 					} else {
-						// settle: translateY(-6) scale(1.1,.85) → 60% translateY(1) scale(.95,1.06) → rest
-						u := float32(easeBounce(k))
-						var dy float32
-						if u < .6 {
-							v := u / .6
-							dy, sx, sy = -6+7*v, 1.1-.15*v, .85+.21*v
-						} else {
-							v := (u - .6) / .4
-							dy, sx, sy = 1-v, .95+.05*v, 1.06-.06*v
-						}
-						y += dy
+						// settle: translateY(-6) scale(1.1,.85) → rest on a cubic, no rebound
+						v := 1 - float32(easeStd(k))
+						sx, sy = 1+.1*v, 1-.15*v
+						y -= 6 * v
 					}
 				}
 				if sx != 1 || sy != 1 {
-					p.Transform(ui.Scaling(sx, sy), x, y+b.r, func() { a.paintBall(p, x, y, b.r, a.pal.level[b.lv], 1) })
+					px, py := pen.pt(x, y+b.r)
+					p.Transform(ui.Scaling(sx, sy), px, py, func() { a.paintBall(p, x, y, b.r, a.pal.level[b.lv], 1) })
 				} else {
 					a.paintBall(p, x, y, b.r, a.pal.level[b.lv], 1)
 				}
@@ -537,9 +567,10 @@ func (a *app) paintBinBack(p *ui.Painter, ents []pileEnt) {
 			if hb != nil {
 				x, y, r := ox+hb.x, oy+hb.y, hb.r*sw
 				a.paintBall(p, x, y, r, a.pal.level[hb.lv], 1)
-				p.StrokePath((&ui.Path{}).Circle(x, y, r+.6), 1.2, ui.RGBA(255, 255, 255, .92))
+				p.StrokePath(&(&penPath{}).Circle(x, y, r+.6).Path, pen.w(1.2), ui.RGBA(255, 255, 255, .92))
 			}
 		})
+		a.paintZapSparks(p, ox, oy)
 	})
 }
 
@@ -548,12 +579,17 @@ func (a *app) paintBall(p *ui.Painter, x, y, r float32, c ui.Color, alpha float3
 	if r <= .2 || alpha <= 0 {
 		return
 	}
-	var disc ui.Path
+	var disc penPath
 	disc.Circle(x, y, r)
-	p.ClipPath(&disc, func() {
-		p.FillPath(&disc, c.Mix(ui.RGBA(0, 0, 0, 1), .22).Alpha(alpha))
-		p.FillPath((&ui.Path{}).Circle(x-min(1.5, r*.2), y-min(1.5, r*.2), r), c.Alpha(alpha))
-		p.FillPath((&ui.Path{}).Circle(x-r*.35, y-r*.35, r*.32), ui.RGBA(255, 255, 255, .22*alpha))
+	if a.pal.art == artInk { // e-ink: a flat disc and an ink line, no light on it
+		p.FillPath(&disc.Path, c.Alpha(alpha))
+		p.StrokePath(&disc.Path, max(.8, min(1.4, r*.12)), a.pal.ink.Alpha(.9*alpha))
+		return
+	}
+	p.ClipPath(&disc.Path, func() {
+		p.FillPath(&disc.Path, c.Mix(ui.RGBA(0, 0, 0, 1), .22).Alpha(alpha))
+		p.FillPath(&(&penPath{}).Circle(x-min(1.5, r*.2), y-min(1.5, r*.2), r).Path, c.Alpha(alpha))
+		p.FillPath(&(&penPath{}).Circle(x-r*.35, y-r*.35, r*.32).Path, ui.RGBA(255, 255, 255, .22*alpha))
 	})
 }
 
@@ -577,7 +613,7 @@ func (a *app) paintBinFront(p *ui.Painter) {
 		P := func(d string) *ui.Path { return svgPath(d, ox, oy) }
 		body := P(T.body)
 		p.FillPath(body, ik.bodyFill)
-		p.StrokePath(body, 1.2, ik.bodyLine)
+		p.StrokePath(body, pen.w(1.2), ik.bodyLine)
 		rim := ik.rim
 		if T.lids == 0 && lid > 0 {
 			rim = a.pal.ink.Alpha(.45)
@@ -585,41 +621,41 @@ func (a *app) paintBinFront(p *ui.Painter) {
 		switch f.tier {
 		case 0:
 			halfEllipse(p, ox+27, oy+15, 21, 3.6, rim, 1.8)
-			p.StrokePath(P("M10.5 21L12.6 52").Cap(ui.RoundCap), 2.2, ik.detail)
+			p.StrokePath(P("M10.5 21L12.6 52").Cap(ui.RoundCap), pen.w(2.2), ik.detail)
 		case 1:
 			p.ClipPath(body, func() {
-				var m ui.Path
+				var m penPath
 				for x := float32(-70); x < 140; x += 7 {
 					m.MoveTo(ox+x, oy+17).LineTo(ox+x+60, oy+77).MoveTo(ox+x+60, oy+17).LineTo(ox+x, oy+77)
 				}
-				p.StrokePath(&m, .9, ik.detail)
+				p.StrokePath(&m.Path, pen.w(.9), ik.detail)
 			})
-			p.StrokePath(P("M11.2 69H58.8"), 3, ik.detail)
+			p.StrokePath(P("M11.2 69H58.8"), pen.w(3), ik.detail)
 			halfEllipse(p, ox+35, oy+17, 30, 4.6, rim, 2.2)
 		case 2:
-			p.StrokePath(P("M17.7 28L22.7 92M27.4 28L30.4 93M37.1 28L38.1 93M46.9 28L45.9 93M56.6 28L53.6 93M66.3 28L61.3 92"), 1, ik.detail)
-			p.StrokePath(P("M12.5 34L16 88").Cap(ui.RoundCap), 2.5, ik.detail)
-			p.Fill(ui.Rect{X: ox + 5.5, Y: oy + 21, W: 73, H: 5}, ik.rimFill, 2.5)
+			p.StrokePath(P("M17.7 28L22.7 92M27.4 28L30.4 93M37.1 28L38.1 93M46.9 28L45.9 93M56.6 28L53.6 93M66.3 28L61.3 92"), pen.w(1), ik.detail)
+			p.StrokePath(P("M12.5 34L16 88").Cap(ui.RoundCap), pen.w(2.5), ik.detail)
+			fillR(p, ui.Rect{X: ox + 5.5, Y: oy + 21, W: 73, H: 5}, ik.rimFill, 2.5)
 		case 3:
-			p.StrokePath(P("M24 42L27 116M38 42L39.5 117M54 42V117M70 42L68.5 117M84 42L81 116"), 1, ik.detail)
-			p.StrokePath(P("M13.5 60H94.5"), 5, ik.detail)
-			p.StrokePath(rrect(ox+42, oy+74, 24, 15, 2), 1, ik.detail)
-			p.StrokePath(P("M15 46L19.5 112").Cap(ui.RoundCap), 3, ik.detail)
-			p.Fill(ui.Rect{X: ox + 7, Y: oy + 33, W: 94, H: 5.5}, ik.rimFill, 2.5)
+			p.StrokePath(P("M24 42L27 116M38 42L39.5 117M54 42V117M70 42L68.5 117M84 42L81 116"), pen.w(1), ik.detail)
+			p.StrokePath(P("M13.5 60H94.5"), pen.w(5), ik.detail)
+			p.StrokePath(rrect(ox+42, oy+74, 24, 15, 2), pen.w(1), ik.detail)
+			p.StrokePath(P("M15 46L19.5 112").Cap(ui.RoundCap), pen.w(3), ik.detail)
+			fillR(p, ui.Rect{X: ox + 7, Y: oy + 33, W: 94, H: 5.5}, ik.rimFill, 2.5)
 			for _, cx := range []float32{25, 83} {
 				wheel(p, ox+cx, oy+126, 9, 3, ik)
 			}
 		case 4:
-			p.StrokePath(P("M12 58H160M14.5 79H157.5"), 1.2, ik.detail)
-			p.StrokePath(P("M50 40L52 100M86 40V100M122 40L120 100"), 1, ik.detail)
+			p.StrokePath(P("M12 58H160M14.5 79H157.5"), pen.w(1.2), ik.detail)
+			p.StrokePath(P("M50 40L52 100M86 40V100M122 40L120 100"), pen.w(1), ik.detail)
 			for _, x := range []float32{28, 110} {
-				p.Fill(ui.Rect{X: ox + x, Y: oy + 85, W: 34, H: 9}, ik.open, 1.5)
-				p.StrokePath(rrect(ox+x, oy+85, 34, 9, 1.5), 1, ik.detail)
+				fillR(p, ui.Rect{X: ox + x, Y: oy + 85, W: 34, H: 9}, ik.open, 1.5)
+				p.StrokePath(rrect(ox+x, oy+85, 34, 9, 1.5), pen.w(1), ik.detail)
 			}
-			p.StrokePath(P("M13 44L18 96").Cap(ui.RoundCap), 3, ik.detail)
-			p.Fill(ui.Rect{X: ox + 5, Y: oy + 33, W: 162, H: 5.5}, ik.rimFill, 2.5)
-			p.Fill(ui.Rect{X: ox + 27, Y: oy + 102, W: 7, H: 5}, ik.wheel, 0)
-			p.Fill(ui.Rect{X: ox + 138, Y: oy + 102, W: 7, H: 5}, ik.wheel, 0)
+			p.StrokePath(P("M13 44L18 96").Cap(ui.RoundCap), pen.w(3), ik.detail)
+			fillR(p, ui.Rect{X: ox + 5, Y: oy + 33, W: 162, H: 5.5}, ik.rimFill, 2.5)
+			fillR(p, ui.Rect{X: ox + 27, Y: oy + 102, W: 7, H: 5}, ik.wheel, 0)
+			fillR(p, ui.Rect{X: ox + 138, Y: oy + 102, W: 7, H: 5}, ik.wheel, 0)
 			for _, cx := range []float32{30.5, 141.5} {
 				wheel(p, ox+cx, oy+110, 6.5, 0, ik)
 			}
@@ -631,26 +667,27 @@ func (a *app) paintBinFront(p *ui.Painter) {
 			if i == 1 {
 				deg = lid
 			}
-			p.Transform(ui.Rotation(deg), ox+pv[0], oy+pv[1], func() {
+			px, py := pen.pt(ox+pv[0], oy+pv[1])
+			p.Transform(ui.Rotation(deg), px, py, func() {
 				switch f.tier {
 				case 2:
-					var h ui.Path
+					var h penPath
 					h.MoveTo(ox+33, oy+14.5).LineTo(ox+33, oy+11).QuadTo(ox+33, oy+8, ox+36, oy+8).LineTo(ox+48, oy+8).
 						QuadTo(ox+51, oy+8, ox+51, oy+11).LineTo(ox+51, oy+14.5)
-					p.StrokePath(&h, 2.6, ik.handle)
-					p.Fill(ui.Rect{X: ox + 4, Y: oy + 14, W: 76, H: 7.5}, ik.lid, 3.5)
-					p.Fill(ui.Rect{X: ox + 4, Y: oy + 14, W: 76, H: 2.5}, ik.lidHi, 1.25)
+					p.StrokePath(&h.Path, pen.w(2.6), ik.handle)
+					fillR(p, ui.Rect{X: ox + 4, Y: oy + 14, W: 76, H: 7.5}, ik.lid, 3.5)
+					fillR(p, ui.Rect{X: ox + 4, Y: oy + 14, W: 76, H: 2.5}, ik.lidHi, 1.25)
 				case 3:
-					p.Fill(ui.Rect{X: ox + 42, Y: oy + 19.5, W: 24, H: 4.5}, ik.handle, 2.2)
-					p.Fill(ui.Rect{X: ox + 4, Y: oy + 24, W: 100, H: 10}, ik.lid, 3)
-					p.Fill(ui.Rect{X: ox + 4, Y: oy + 24, W: 100, H: 3}, ik.lidHi, 1.5)
+					fillR(p, ui.Rect{X: ox + 42, Y: oy + 19.5, W: 24, H: 4.5}, ik.handle, 2.2)
+					fillR(p, ui.Rect{X: ox + 4, Y: oy + 24, W: 100, H: 10}, ik.lid, 3)
+					fillR(p, ui.Rect{X: ox + 4, Y: oy + 24, W: 100, H: 3}, ik.lidHi, 1.5)
 				case 4:
 					x, c := float32(4), ik.lid
 					if i == 1 {
 						x, c = 86, ik.lid2
 					}
-					p.Fill(ui.Rect{X: ox + x, Y: oy + 25, W: 82, H: 9}, c, 2.5)
-					p.Fill(ui.Rect{X: ox + x, Y: oy + 25, W: 82, H: 2.6}, ik.lidHi, 1.3)
+					fillR(p, ui.Rect{X: ox + x, Y: oy + 25, W: 82, H: 9}, c, 2.5)
+					fillR(p, ui.Rect{X: ox + x, Y: oy + 25, W: 82, H: 2.6}, ik.lidHi, 1.3)
 				}
 			})
 		}
@@ -658,42 +695,42 @@ func (a *app) paintBinFront(p *ui.Painter) {
 }
 
 func wheel(p *ui.Painter, x, y, r, hub float32, ik binInk) {
-	var w ui.Path
+	var w penPath
 	w.Circle(x, y, r)
-	p.FillPath(&w, ik.wheel)
-	p.StrokePath(&w, 1, ik.wheelLine)
+	p.FillPath(&w.Path, ik.wheel)
+	p.StrokePath(&w.Path, pen.w(1), ik.wheelLine)
 	if hub > 0 {
-		p.FillPath((&ui.Path{}).Circle(x, y, hub), ik.hub)
+		p.FillPath(&(&penPath{}).Circle(x, y, hub).Path, ik.hub)
 	}
 }
 
 const kappa = .5523
 
 func ellipse(p *ui.Painter, cx, cy, rx, ry float32, fill, line ui.Color, w float32) {
-	var e ui.Path
+	var e penPath
 	e.MoveTo(cx-rx, cy).
 		CubeTo(cx-rx, cy-kappa*ry, cx-kappa*rx, cy-ry, cx, cy-ry).
 		CubeTo(cx+kappa*rx, cy-ry, cx+rx, cy-kappa*ry, cx+rx, cy).
 		CubeTo(cx+rx, cy+kappa*ry, cx+kappa*rx, cy+ry, cx, cy+ry).
 		CubeTo(cx-kappa*rx, cy+ry, cx-rx, cy+kappa*ry, cx-rx, cy).Close()
-	p.FillPath(&e, fill)
-	p.StrokePath(&e, w, line)
+	p.FillPath(&e.Path, fill)
+	p.StrokePath(&e.Path, pen.w(w), line)
 }
 
 // halfEllipse strokes the front (lower) half of a rim.
 func halfEllipse(p *ui.Painter, cx, cy, rx, ry float32, c ui.Color, w float32) {
-	var e ui.Path
+	var e penPath
 	e.MoveTo(cx-rx, cy).
 		CubeTo(cx-rx, cy+kappa*ry, cx-kappa*rx, cy+ry, cx, cy+ry).
 		CubeTo(cx+kappa*rx, cy+ry, cx+rx, cy+kappa*ry, cx+rx, cy)
-	p.StrokePath(e.Cap(ui.RoundCap), w, c)
+	p.StrokePath(e.Path.Cap(ui.RoundCap), pen.w(w), c)
 }
 
 func rrect(x, y, w, h, r float32) *ui.Path {
-	var p ui.Path
+	var p penPath
 	p.MoveTo(x+r, y).LineTo(x+w-r, y).QuadTo(x+w, y, x+w, y+r).LineTo(x+w, y+h-r).QuadTo(x+w, y+h, x+w-r, y+h).
 		LineTo(x+r, y+h).QuadTo(x, y+h, x, y+h-r).LineTo(x, y+r).QuadTo(x, y, x+r, y).Close()
-	return &p
+	return &p.Path
 }
 
 // svgPath parses SVG path data (M L H V Q C Z, absolute or relative), offset by (ox, oy).
@@ -710,7 +747,7 @@ func svgPath(d string, ox, oy float32) *ui.Path {
 		ops = parseSVG(d)
 		svgCache[d] = ops
 	}
-	var p ui.Path
+	var p penPath
 	var x, y, sx, sy float32
 	for _, o := range ops {
 		rel := o.c >= 'a'
@@ -744,7 +781,7 @@ func svgPath(d string, ox, oy float32) *ui.Path {
 			x, y = sx, sy
 		}
 	}
-	return &p
+	return &p.Path
 }
 
 var svgArity = map[byte]int{'m': 2, 'l': 2, 'h': 1, 'v': 1, 'q': 4, 'c': 6, 'z': 0}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -21,13 +22,13 @@ const (
 
 // arc is one painted sector, kept for painting, hit testing and the HUD callout.
 type arc struct {
-	node   int32 // scan.None for an aggregate of small siblings
-	parent int32 // the aggregate's parent
-	count  int   // siblings in the aggregate
-	size   int64
-	a0, a1 float32 // radians clockwise from 12 o'clock
-	r0, r1 float32
-	ring   int
+	node    int32 // scan.None for an aggregate of small siblings
+	parent  int32 // the aggregate's parent
+	count   int   // siblings in the aggregate
+	size    int64
+	a0, a1  float32 // radians clockwise from 12 o'clock
+	r0, r1  float32
+	ring    int
 	h, s, l float32
 	leaf    bool
 	label   bool
@@ -38,13 +39,13 @@ type arc struct {
 type view struct{ x0, x1, d float64 }
 
 type geoKey struct {
-	ver        int
-	v          view
-	box        ui.Rect
-	mode       int
-	pal        *palette
-	grow       float32
-	morph      float32
+	ver   int
+	v     view
+	box   ui.Rect
+	mode  int
+	pal   *palette
+	grow  float32
+	morph float32
 }
 
 type sunburst struct {
@@ -60,12 +61,13 @@ type sunburst struct {
 	zooming bool
 	intro   time.Time
 	cur     view
+	wash    float32 // blueprint: how much of the fills show (see washK)
 
 	// morph: after a removal or restore, arcs slide from where they were to the new layout
-	prev   map[int32][2]float32
-	mT0    time.Time
-	mDur   time.Duration
-	mk     float64
+	prev map[int32][2]float32
+	mT0  time.Time
+	mDur time.Duration
+	mk   float64
 }
 
 func arcKey(ar *arc) int32 {
@@ -216,7 +218,7 @@ func growAt(k float64, ring float64) float32 {
 func (a *app) layout(v view, r ui.Rect, intro float64) {
 	s := &a.sun
 	s.box = r
-	s.cx, s.cy = r.X+r.W/2, r.Y+r.H/2
+	s.cx, s.cy = float32(math.Round(float64(r.X+r.W/2))), float32(math.Round(float64(r.Y+r.H/2))) // whole pixels: path masks cache
 	pad := float32(30)
 	if a.pal.instr != instrNone {
 		pad = 62
@@ -262,7 +264,7 @@ func (a *app) layout(v view, r ui.Rect, intro float64) {
 			r1 := r0 + (s.r0+float32(ring)*s.rw-r0)*g
 			if r1-r0 > .5 {
 				b0, b1 := float32(max(0, a0)), float32(min(tau, a1))
-				h, sat, l := a.arcColor(n, (b0+b1)/2/tau, int(math.Round(ring)), idx)
+				h, sat, l := a.nodeColor(n, nx0, nx1, depth, idx)
 				ar := arc{node: n, size: nd.Size, a0: b0, a1: b1, r0: r0, r1: r1, ring: int(math.Round(ring)), h: h, s: sat, l: l, leaf: nd.First == scan.None}
 				ar.label = g >= 1 && r1-r0 > 15 && (b1-b0)*(r0+r1)/2 > 54
 				padA := min(.8/r0, (b1-b0)*.2)
@@ -309,11 +311,18 @@ func (a *app) layout(v view, r ui.Rect, intro float64) {
 	a.arcCount = len(s.arcs)
 }
 
+// nodeColor is node n's colour, the same at every drill level: the ramp is spread over the
+// whole tree by angle (nx0, nx1 are fractions of the whole), and shading goes by absolute depth,
+// so a folder keeps its colour as you zoom in and out of it.
+func (a *app) nodeColor(n int32, nx0, nx1 float64, depth, idx int) (h, s, l float32) {
+	return a.arcColor(n, float32((nx0+nx1)/2), float32(depth), idx)
+}
+
 // arcColor: structure mode follows the style's ramp by angle; safety mode colours by verdict,
 // in the style's own level colours.
-func (a *app) arcColor(n int32, t float32, ring, idx int) (h, s, l float32) {
+func (a *app) arcColor(n int32, t float32, ring float32, idx int) (h, s, l float32) {
 	pal := a.pal
-	rr := float32(min(rings, max(1, ring)))
+	rr := min(rings, max(1, ring))
 	light := !pal.dark
 	leaf := a.t.Nodes[n].First == scan.None
 	if a.mode == modeSafety {
@@ -336,15 +345,20 @@ func (a *app) arcColor(n int32, t float32, ring, idx int) (h, s, l float32) {
 			if idx == 0 && ring <= 2 {
 				h, s, l = 16, 100, 56+rr*3 // the biggest of each inner ring wears the orange
 			}
-		case artSwiss, artPlate:
+		case artPlate:
 			l = L
 		case artInk:
 			l = L - rr*2.5
+		case artToon:
+			l = L + 2 - rr*1.2 // stays candy-bright out to the rim
 		}
 	}
 	l += float32(idx&1) * 1.6
 	if leaf {
 		s *= .5
+		if pal.art == artToon {
+			s *= 1.4
+		}
 		if light {
 			l += 8
 		} else {
@@ -464,7 +478,7 @@ func (a *app) paintSun(p *ui.Painter, r ui.Rect) {
 	t0 := time.Now()
 	pal := a.pal
 	now := p.Now()
-	a.now = now
+	a.now = a.clock(now)
 	a.paintDeco(p, r)
 	if a.t == nil {
 		return
@@ -485,9 +499,15 @@ func (a *app) paintSun(p *ui.Painter, r ui.Rect) {
 		p.AnimationFrame()
 	}
 	s := &a.sun
+	s.wash = a.washK(now, intro)
 
+	// blueprint: the sheet's grid stops at the drawing, so the linework reads against clean paper
+	if pal.art == artBlueprint {
+		var d ui.Path
+		p.FillPath(circle(&d, s.cx, s.cy, s.r0+float32(rings)*s.rw+3, 0, tau), pal.bg.Alpha(.94))
+	}
 	// guide rings
-	if pal.instr != instrNone && pal.art != artSwiss {
+	if pal.instr != instrNone {
 		var g ui.Path
 		for i := 0; i <= rings; i++ {
 			circle(&g, s.cx, s.cy, s.r0+float32(i)*s.rw+.5, 0, tau)
@@ -524,7 +544,7 @@ func (a *app) paintSun(p *ui.Painter, r ui.Rect) {
 		}
 		if h.node == scan.None {
 			p.FillPath(h.path, pal.agg.Alpha(alpha))
-			if pal.holo() || pal.art == artPlate || pal.art == artInk {
+			if pal.holo() || pal.art == artPlate || pal.art == artInk || pal.art == artToon {
 				p.StrokePath(h.path, .6, pal.ink.Alpha(.18*alpha))
 			}
 			continue
@@ -540,16 +560,12 @@ func (a *app) paintSun(p *ui.Painter, r ui.Rect) {
 
 	// selection outline
 	w := float32(1.5)
-	if pal.art == artInk || pal.art == artSwiss {
+	if pal.art == artInk {
 		w = 2.5
 	}
 	for i := range s.arcs {
 		if h := &s.arcs[i]; h.node == a.selected && a.selected != a.focus {
-			c := pal.text
-			if pal.art == artSwiss {
-				c = pal.accent
-			}
-			p.StrokePath(h.path, w, c)
+			p.StrokePath(h.path, w, pal.text)
 		}
 	}
 
@@ -568,7 +584,7 @@ func (a *app) unsweptL() float32 {
 func (a *app) paintArc(p *ui.Painter, h *arc, H, S, L, alpha float32) {
 	pal := a.pal
 	switch pal.art {
-	case artSolid, artSwiss:
+	case artSolid:
 		p.FillPath(h.path, hsl(H, S, L, alpha))
 	case artHolo:
 		fa, sa := float32(.26), float32(.9)
@@ -585,20 +601,20 @@ func (a *app) paintArc(p *ui.Painter, h *arc, H, S, L, alpha float32) {
 		}
 		p.StrokePath(h.path, w, pal.ink.Alpha(wa*alpha))
 	case artBlueprint:
-		fill := ui.RGBA(255, 255, 255, (.04+float32(h.ring)*.012)*alpha)
+		fill := ui.RGBA(255, 255, 255, (.06+float32(h.ring)*.016)*alpha*a.sun.wash)
 		if a.mode == modeSafety {
-			fill = hsl(H, S, L, .22*alpha)
+			fill = hsl(H, S, L, .22*alpha*a.sun.wash)
 		}
 		p.FillPath(h.path, fill)
-		sa := float32(.85)
+		sa, w := float32(.95), float32(1.1)
 		if h.leaf {
-			sa = .45
+			sa, w = .55, .8
 		}
 		edge := pal.ink
 		if a.mode == modeSafety {
 			edge = hsl(H, S, min(92, L+10), 1)
 		}
-		p.StrokePath(h.path, .8, edge.Alpha(sa*alpha))
+		p.StrokePath(h.path, w, edge.Alpha(sa*alpha))
 	case artPhosphor:
 		p.FillPath(h.path, hsl(H, S, L*.6, .12*alpha))
 		ea := float32(.9)
@@ -616,6 +632,39 @@ func (a *app) paintArc(p *ui.Painter, h *arc, H, S, L, alpha float32) {
 			hatch(p, h.path, h.lv == 2, pal.ink.Alpha(.26*alpha))
 		}
 		p.StrokePath(h.path, .8, pal.ink.Alpha(.85*alpha))
+	case artToon:
+		p.FillPath(h.path, hsl(H, S, L, alpha))
+		if !h.leaf {
+			a.shine(p, h, alpha)
+		}
+		w, wa := float32(1.8), float32(.92)
+		if h.leaf {
+			w, wa = 1.1, .6
+		}
+		p.StrokePath(h.path, w, pal.ink.Alpha(wa*alpha))
+	}
+}
+
+// shine is a cartoon cel's highlight: a short white stroke along the outer edge and a dot after it.
+func (a *app) shine(p *ui.Painter, h *arc, alpha float32) {
+	s := &a.sun
+	th := h.r1 - h.r0
+	span := (h.a1 - h.a0) * h.r1
+	if th < 12 || span < 40 {
+		return
+	}
+	r := h.r1 - th*.26
+	pad := 9 / r
+	b0 := float64(a0Top + h.a0 + pad)
+	b1 := b0 + float64(min(h.a1-h.a0-2*pad, 46/r)*.62)
+	var l ui.Path
+	arcTo(l.MoveTo(s.cx+float32(math.Cos(b0))*r, s.cy+float32(math.Sin(b0))*r), s.cx, s.cy, r, b0, b1)
+	l.Cap(ui.RoundCap)
+	w := min(3.2, th*.14)
+	p.StrokePath(&l, w, ui.RGBA(255, 255, 255, .7*alpha))
+	d := b1 + float64(w*1.6/r)
+	if d < float64(a0Top+h.a1-pad) {
+		p.FillPath((&ui.Path{}).Circle(s.cx+float32(math.Cos(d))*r, s.cy+float32(math.Sin(d))*r, w*.55), ui.RGBA(255, 255, 255, .7*alpha))
 	}
 }
 
@@ -655,6 +704,7 @@ func (a *app) paintDeco(p *ui.Painter, r ui.Rect) {
 		}
 		p.StrokePath(&minor, 1, pal.ink.Alpha(.05))
 		p.StrokePath(&major, 1, pal.ink.Alpha(.1))
+		a.sheetFrame(p, r)
 	case decoDots:
 		var d ui.Path
 		for y := r.Y + 9; y < r.Y+r.H; y += 18 {
@@ -663,7 +713,122 @@ func (a *app) paintDeco(p *ui.Painter, r ui.Rect) {
 			}
 		}
 		p.FillPath(&d, pal.ink.Alpha(.16))
+	case decoPolka:
+		var d ui.Path
+		row := 0
+		for y := r.Y + 14; y < r.Y+r.H+20; y += 30 {
+			off := float32(row&1) * 26
+			for x := r.X + 14 + off; x < r.X+r.W+20; x += 52 {
+				d.Circle(x, y, 5)
+			}
+			row++
+		}
+		p.FillPath(&d, pal.accent.Alpha(.07))
+	case decoHearts:
+		var d ui.Path
+		row := 0
+		for y := r.Y + 18; y < r.Y+r.H+24; y += 40 {
+			off := float32(row&1) * 34
+			for x := r.X + 18 + off; x < r.X+r.W+24; x += 68 {
+				heart(&d, x, y, 7)
+			}
+			row++
+		}
+		p.FillPath(&d, pal.accent.Alpha(.08))
+	case decoPaint:
+		paintSplashes(p, r, 1, .1)
 	}
+}
+
+// splashPaints are the colours on a painter's palette.
+var splashPaints = [...]ui.Color{ui.Hex("#22a386"), ui.Hex("#ffb627"), ui.Hex("#ef5b6a"), ui.Hex("#3f8fe0"), ui.Hex("#a873d9")}
+
+// paintSplashes scatters paint blobs, each with a couple of drops, at fixed pseudo-random spots
+// on a cell grid, so they stay put as the window resizes.
+func paintSplashes(p *ui.Painter, r ui.Rect, scale, alpha float32) {
+	cell := 96 * scale
+	var paths [len(splashPaints)]ui.Path
+	for gy := 0; float32(gy)*cell < r.H; gy++ {
+		for gx := 0; float32(gx)*cell < r.W; gx++ {
+			n := uint32(gx*73856093 ^ gy*19349663)
+			n ^= n >> 13
+			n *= 0x5bd1e995
+			n ^= n >> 15
+			if n%3 == 0 {
+				continue
+			}
+			f := func(k uint) float32 { return float32((n>>k)&255) / 255 }
+			x := r.X + (float32(gx)+.15+.7*f(0))*cell
+			y := r.Y + (float32(gy)+.15+.7*f(8))*cell
+			rad := (4 + 6*f(16)) * scale
+			d := &paths[int(n>>24)%len(splashPaints)]
+			d.Circle(x, y, rad)
+			ang := float64(f(4)) * tau
+			for k := 0; k < 3; k++ {
+				a := ang + float64(k)*2.1
+				dist := rad * (1.5 + .5*float32(k))
+				d.Circle(x+float32(math.Cos(a))*dist, y+float32(math.Sin(a))*dist, rad*(.32-.07*float32(k)))
+			}
+		}
+	}
+	for i := range paths {
+		p.FillPath(&paths[i], splashPaints[i].Alpha(alpha))
+	}
+}
+
+// heart appends a heart of width about 2s centred on (x, y).
+func heart(p *ui.Path, x, y, s float32) *ui.Path {
+	p.MoveTo(x, y+s*.85)
+	p.CubeTo(x-s*.25, y+s*.6, x-s, y+s*.15, x-s, y-s*.3)
+	p.CubeTo(x-s, y-s*.85, x-s*.2, y-s, x, y-s*.45)
+	p.CubeTo(x+s*.2, y-s, x+s, y-s*.85, x+s, y-s*.3)
+	p.CubeTo(x+s, y+s*.15, x+s*.25, y+s*.6, x, y+s*.85)
+	return p.Close()
+}
+
+// sheetFrame is a drawing sheet's border: a heavy outer line, a thin inner one and the zone
+// letters and numbers between them, so the drawing area has a hard edge against the panels.
+func (a *app) sheetFrame(p *ui.Painter, r ui.Rect) {
+	ink := a.pal.ink
+	const o, i = 5, 15 // outer and inner insets
+	rect := func(path *ui.Path, in float32) *ui.Path {
+		x0, y0, x1, y1 := r.X+in, r.Y+in, r.X+r.W-in, r.Y+r.H-in
+		return path.MoveTo(x0, y0).LineTo(x1, y0).LineTo(x1, y1).LineTo(x0, y1).Close()
+	}
+	// paper outside the inner line: the grid only shows inside the frame
+	p.ClipPath(rect(&ui.Path{}, 0), func() {
+		p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: i}, a.pal.bg, 0)
+		p.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - i, W: r.W, H: i}, a.pal.bg, 0)
+		p.Fill(ui.Rect{X: r.X, Y: r.Y, W: i, H: r.H}, a.pal.bg, 0)
+		p.Fill(ui.Rect{X: r.X + r.W - i, Y: r.Y, W: i, H: r.H}, a.pal.bg, 0)
+	})
+	p.StrokePath(rect(&ui.Path{}, o), 1.6, ink.Alpha(.75))
+	p.StrokePath(rect(&ui.Path{}, i), .8, ink.Alpha(.55))
+	// zones: letters across, numbers down, about every 150 DIPs
+	var tk ui.Path
+	nx := max(2, int((r.W-2*i)/150))
+	ny := max(2, int((r.H-2*i)/150))
+	zw, zh := (r.W-2*i)/float32(nx), (r.H-2*i)/float32(ny)
+	mid := float32(o+i) / 2
+	for k := 0; k < nx; k++ {
+		x := r.X + i + float32(k)*zw
+		if k > 0 {
+			tk.MoveTo(x, r.Y+o).LineTo(x, r.Y+i).MoveTo(x, r.Y+r.H-i).LineTo(x, r.Y+r.H-o)
+		}
+		l := string(rune('A' + k%26))
+		centerText(p, x+zw/2, r.Y+mid, l, 7.5, 500, ink.Alpha(.6), "monospace")
+		centerText(p, x+zw/2, r.Y+r.H-mid, l, 7.5, 500, ink.Alpha(.6), "monospace")
+	}
+	for k := 0; k < ny; k++ {
+		y := r.Y + i + float32(k)*zh
+		if k > 0 {
+			tk.MoveTo(r.X+o, y).LineTo(r.X+i, y).MoveTo(r.X+r.W-i, y).LineTo(r.X+r.W-o, y)
+		}
+		n := fmt.Sprint(ny - k)
+		centerText(p, r.X+mid, y+zh/2, n, 7.5, 500, ink.Alpha(.6), "monospace")
+		centerText(p, r.X+r.W-mid, y+zh/2, n, 7.5, 500, ink.Alpha(.6), "monospace")
+	}
+	p.StrokePath(&tk, .8, ink.Alpha(.55))
 }
 
 // paintScreen draws effects over the whole chart (CRT scanlines and vignette).
@@ -726,9 +891,9 @@ func (a *app) paintCenter(p *ui.Painter) {
 	sub := ""
 	switch {
 	case info == a.focus && a.centerHot && a.focus != 0:
-		sub = "↑ 返回 " + a.name(a.t.Nodes[a.focus].Parent)
+		sub = Tf("↑ 返回 %s", a.name(a.t.Nodes[a.focus].Parent))
 	case nd.IsDir():
-		sub = fmtNum(int64(nd.Count-1)) + " 个项目"
+		sub = nItems(int64(nd.Count - 1))
 	default:
 		sub = kindOf(a.t.Name(info))
 	}
@@ -736,7 +901,7 @@ func (a *app) paintCenter(p *ui.Painter) {
 		sub += " · " + pct(nd.Size, a.t.Nodes[a.focus].Size)
 	}
 	if a.hoverAgg != nil {
-		name, sub = fmtNum(int64(a.hoverAgg.count))+" 个较小项目", "聚合 · "+pct(a.hoverAgg.size, a.t.Nodes[a.focus].Size)
+		name, sub = Tf("%s 个较小项目", fmtNum(int64(a.hoverAgg.count))), Tf("聚合 · %s", pct(a.hoverAgg.size, a.t.Nodes[a.focus].Size))
 	}
 	fs := max(11, s.r0*.11)
 	big := max(18, s.r0*.25)

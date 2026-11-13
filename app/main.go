@@ -29,7 +29,7 @@ func main() {
 	}
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
-			Title: "FanFree", Width: 1280, Height: 820, MinWidth: 960, MinHeight: 620,
+			Title: "FanFree", Width: 1280, Height: 820, MinWidth: 720, MinHeight: 620,
 			StateKey: "main", Content: ui.View(a.view),
 			TitleBarStyle: mygo.TitleBarHiddenInset,
 		})
@@ -42,8 +42,8 @@ func main() {
 
 const rightW0 = 400
 
-func (a *app) view(c *ui.Context) {
-	a.now = c.Now()
+// applyTheme picks up the chosen style; every window calls it each frame.
+func (a *app) applyTheme(c *ui.Context) {
 	if a.palIdx >= 0 && a.palIdx < len(palettes) {
 		a.pal = palettes[a.palIdx]
 	}
@@ -52,6 +52,11 @@ func (a *app) view(c *ui.Context) {
 		a.lastPal = a.pal
 	}
 	c.SetTheme(a.uiTheme) // per frame
+}
+
+func (a *app) view(c *ui.Context) {
+	a.now = a.clock(c.Now())
+	a.applyTheme(c)
 	a.frame = false
 	a.syncSettings()
 	a.runTimers(c)
@@ -63,8 +68,8 @@ func (a *app) view(c *ui.Context) {
 	if a.scanning {
 		c.After(150 * time.Millisecond)
 	}
-	if c.Shortcut(ui.Cmd, ui.KeyComma) && !a.showSettings && a.ask == nil { // ⌘, (Ctrl+, elsewhere)
-		a.showSettings = true
+	if c.Shortcut(ui.Cmd, ui.KeyComma) && a.ask == nil { // ⌘, (Ctrl+, elsewhere)
+		a.openSettings()
 	}
 	a.keys(c)
 	a.hover, a.hoverAgg, a.centerHot = scan.None, nil, false
@@ -78,29 +83,48 @@ func (a *app) view(c *ui.Context) {
 			a.rightPane(c)
 		})
 	})
+	if a.shown && a.chartR.W > 0 { // the bin, in the window's bottom-right corner
+		a.dock(c)
+	} else {
+		a.binS.right, a.binS.hov = 0, ""
+	}
+	if a.tvK > 0 && a.bin != nil && a.t != nil { // the trash view's legends, from the window's edges
+		a.trashLegend(c)
+	}
 	if a.shown { // the disk line, at the top centre of the window
 		dx, _ := a.diskSpot(c)
-		ui.Box(c.Key("diskw")).Absolute().Top(topY(c) + 1).Left(dx).ZIndex(5).Children(func() {
+		dw := ui.Box(c.Key("diskw")).Absolute().Top(topY(c)+1).Left(dx).ZIndex(5).Translate(0, -(topY(c)+40)*a.tvK)
+		if a.tvK > .5 { // hidden in the trash view: clicks go through
+			dw.PassThrough()
+		}
+		dw.Children(func() {
 			a.diskBar(c).Opacity(1 - .82*a.askK)
 		})
 	}
 	ui.Box(c.Key("fly")).Absolute().Top(0).Left(0).Fill().PassThrough().ZIndex(50).Draw(func(p *ui.Painter, r ui.Rect) {
-		a.now = p.Now()
+		a.now = a.clock(p.Now())
 		a.paintFly(p)
 		a.paintDrag(p)
+		a.paintInkFlash(p, r)
 	})
 	a.dialogs(c)
 	// rebuild in step with the display (120Hz on ProMotion), not on a 16ms timer that beats
 	// against the refresh and drops frames
+	a.wakeForTimers(c)
 	if a.frame || a.fly.active() || len(a.binS.inflight) > 0 {
-		c.AnimationFrame()
+		if a.ink() {
+			now := c.Now()
+			c.After(now.Truncate(inkStep).Add(inkStep).Sub(now))
+		} else {
+			c.AnimationFrame()
+		}
 	}
 }
 
 // keys: Esc backs out (analysis, scene, folder), Backspace goes up, Delete trashes the
 // selection, Enter opens it, the arrows move through the list.
 func (a *app) keys(c *ui.Context) {
-	if a.t == nil || a.scanning || a.showSettings || a.ask != nil {
+	if a.t == nil || a.scanning || a.ask != nil {
 		return
 	}
 	up := func() {
@@ -114,6 +138,8 @@ func (a *app) keys(c *ui.Context) {
 			a.cancelAnalysis()
 		case a.scene != sceneBrowse:
 			a.goScene(sceneBrowse)
+		case a.fileSel(): // the detail slides back to the list
+			a.selected = a.focus
 		case a.pf != pfNone:
 			a.pf = pfNone
 		default:
@@ -163,6 +189,9 @@ func (a *app) leftPane(c *ui.Context) {
 	}
 	a.tvOn = tv == 1
 	a.tvK = max(0, min(1, float32(a.springTo(&a.tvSp, tv))))
+	if a.tvK == 0 {
+		a.rightW0 = a.rightW
+	}
 	// the chart shows safety only while the auto clean analyses (no tab for it any more)
 	if a.anal != nil {
 		a.mode = modeSafety
@@ -176,16 +205,8 @@ func (a *app) leftPane(c *ui.Context) {
 			a.paintSun(p, r)
 		}).Children(func() {
 			ui.Box(c.Key("hud")).Absolute().Top(0).Left(0).Fill().PassThrough().Draw(a.paintHUD)
-			switch {
-			case a.scene == sceneTrash && a.bin != nil && a.t != nil:
-				a.trashLegend(c)
-			case a.mode == modeSafety && a.t != nil:
+			if a.mode == modeSafety && a.t != nil && a.tvK == 0 {
 				a.legend(c)
-			}
-			if a.shown && a.chartR.W > 0 { // the bin, in the chart's bottom-right corner
-				a.dock(c)
-			} else {
-				a.binS.right, a.binS.hov = 0, ""
 			}
 		})
 		if a.scene == sceneTrash && a.bin != nil && a.t != nil {
@@ -197,8 +218,8 @@ func (a *app) leftPane(c *ui.Context) {
 			}
 		}
 		bot := a.lbot(c)
-		if a.tvK > 0 {
-			bot.Opacity(1 - a.tvK)
+		if a.tvK > 0 { // the clean bar drops straight down and gives its height to the chart
+			bot.Translate((a.rightW-a.refRight())/2, 90*a.tvK).Height(lbotH * (1 - a.tvK))
 		}
 	})
 }
@@ -217,7 +238,7 @@ func (a *app) ltop(c *ui.Context) {
 	}
 	live := !a.tvOn && a.anal == nil
 	ui.Row(c.Key("ltop")).Padding(top, 16, 0, 18+bar.Left).Gap(8).AlignItems(ui.Center).Height(30 + top).DragWindow().Children(func() {
-		ui.Row(c.Key("lnav")).Gap(8).AlignItems(ui.Center).Shrink(1).MaxWidth(navMax).Clip().Opacity(1 - tv).Children(func() {
+		ui.Row(c.Key("lnav")).Gap(8).AlignItems(ui.Center).Shrink(1).MaxWidth(navMax).Clip().Translate(0, -(30+top)*tv).Children(func() {
 			showUp := a.t != nil && a.focus != 0 && !a.scanning
 			if showUp && !a.upOn {
 				a.upT0 = a.now // the up button slides in from the left
@@ -225,14 +246,14 @@ func (a *app) ltop(c *ui.Context) {
 			a.upOn = showUp
 			if showUp {
 				up := ui.Row(c.Key("up")).Height(28).Padding(0, 9, 0, 4).Gap(2).Radius(7).AlignItems(ui.Center).
-					TextColor(pal.t2).Cursor(ui.CursorPointer).Tooltip("返回上级（Esc）").Shrink(0)
+					TextColor(pal.t2).Cursor(ui.CursorPointer).Tooltip(T("返回上级（Esc）")).Shrink(0)
 				up.Children(func() {
 					icon(c, icoBack, 16, pal.t2, 2)
 					ui.Text(c, a.name(a.t.Nodes[a.focus].Parent)).FontSize(12.5).SingleLine().MaxWidth(120).Ellipsis("…")
 				})
 				if k := a.progress(a.upT0, 0, 220*time.Millisecond); k < 1 {
 					e := float32(easeStd(k))
-					up.Opacity(e).Translate(-6*(1-e), 0)
+					up.Translate(-(up.Bounds().W+18)*(1-e), 0)
 				}
 				if up.Hovered() && live {
 					up.Background(pal.hov).TextColor(pal.text)
@@ -244,19 +265,19 @@ func (a *app) ltop(c *ui.Context) {
 			a.crumbs(c)
 		})
 		if tv > 0 { // the trash scene's title, where the crumbs were
-			ui.Row(c.Key("tvt")).Absolute().Left(18 + bar.Left).MaxWidth(navMax).Top(top).Height(30).Gap(10).AlignItems(ui.Center).
-				Opacity(tv).PassThrough().Children(func() {
-				ui.Text(c, trashName()+"里的内容来自哪里").FontSize(13).FontWeight(600).SingleLine().Shrink(0)
+			ui.Row(c.Key("tvt")).Absolute().Left(18+bar.Left).MaxWidth(navMax).Top(top).Height(30).Gap(10).AlignItems(ui.Center).
+				Translate(0, -(30+top)*(1-tv)).PassThrough().Children(func() {
+				ui.Text(c, Tf("%s里的内容来自哪里", trashName())).FontSize(13).FontWeight(600).SingleLine().Shrink(0)
 				ui.Text(c, a.trashSummary()).FontSize(12).TextColor(pal.t3).SingleLine().TruncateMiddle().Shrink(1)
 			})
 		}
 		ui.Spacer(c)
 		if a.btn(c.Key("open"), "", btnGhost, false, func() { icon(c, icoFolder, 16, pal.t2, 1.7) }).
-			Tooltip("选择文件夹…").Disabled(a.anal != nil).Opacity(1-tv).Clicked() && !a.tvOn {
-			a.pickFolder("选择要分析的文件夹", a.startScan)
+			Tooltip(T("选择文件夹…")).Disabled(a.anal != nil).Translate(0, -(30+top)*tv).Clicked() && !a.tvOn {
+			a.pickFolder(T("选择要分析的文件夹"), a.startScan)
 		}
-		if a.btn(c.Key("settings"), "设置", btnPlain, false, nil).Tooltip("设置（"+settingsKey()+"）").Opacity(1-tv).Clicked() && !a.tvOn {
-			a.showSettings = true
+		if a.btn(c.Key("settings"), T("设置"), btnPlain, false, nil).Tooltip(Tf("设置（%s）", settingsKey())).Translate(0, -(30+top)*tv).Clicked() && !a.tvOn {
+			a.openSettings()
 		}
 	})
 }
@@ -363,19 +384,19 @@ func (a *app) nodeMenu(m *ui.Menu, n int32) {
 		return
 	}
 	nd := &a.t.Nodes[n]
-	if nd.IsDir() && nd.First != scan.None && n != a.focus && m.Item("打开").Chosen() {
+	if nd.IsDir() && nd.First != scan.None && n != a.focus && m.Item(T("打开")).Chosen() {
 		a.zoomTo(n)
 	}
 	path := a.t.Path(n)
 	if m.Item(revealLabel()).Chosen() {
 		mygo.Shell.ShowItemInFolder(path)
 	}
-	if m.Item("复制路径").Chosen() {
+	if m.Item(T("复制路径")).Chosen() {
 		mygo.Clipboard.WriteText(path)
 	}
 	m.Separator()
 	ok, _ := a.canTrash(n)
-	if m.Item("移至" + trashName()).Disabled(!ok).Danger().Chosen() {
+	if m.Item(Tf("移至%s", trashName())).Disabled(!ok).Danger().Chosen() {
 		a.selected = n
 		a.requestTrash(n)
 	}
@@ -403,6 +424,9 @@ var levelTitles = [4]string{"可安全清理", "建议复核后清理", "个人�
 var levelNames = [4]string{"可清理", "需复核", "个人数据", "系统保护"}
 
 // lbot is the clean bar: the big 自动清理 button, centred, with what it would take on it.
+// lbotH is the clean bar's height: the progress line, the padded big button.
+const lbotH = 2 + 12 + 48 + 22
+
 func (a *app) lbot(c *ui.Context) ui.Element {
 	pal := a.pal
 	an := a.anal
@@ -417,7 +441,7 @@ func (a *app) lbot(c *ui.Context) ui.Element {
 				p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W * k, H: r.H}, pal.level[safety.Safe].Alpha(.55), 0)
 			}
 		})
-		ui.Row(c).Padding(12, 16, 22, 16).Justify(ui.Center).Children(func() {
+		ui.Row(c).Padding(12, 16, 22, 16).Justify(ui.Center).Shrink(0).Children(func() {
 			a.bigButton(c)
 		})
 		if a.tvOn { // faded in the trash scene: a click here leads back, not to the hidden buttons
@@ -426,17 +450,6 @@ func (a *app) lbot(c *ui.Context) ui.Element {
 			}
 		}
 	})
-}
-
-func joinCN(s []string) string {
-	out := ""
-	for i, x := range s {
-		if i > 0 {
-			out += "、"
-		}
-		out += x
-	}
-	return out
 }
 
 // bigButton is #bFree: 自动清理 with the size it frees; 停止分析 with progress while the sweep
@@ -449,33 +462,33 @@ func (a *app) bigButton(c *ui.Context) {
 	k := float32(0)
 	switch {
 	case an != nil && an.doneAt.IsZero():
-		label, busy, k = an.phase()+"…", true, float32(an.k)
-		chip = fmtNum(int64(an.found)) + " 项 · " + fmtSize(an.foundSz)
-		tip = "停止分析（Esc）"
+		label, busy, k = T(an.phase())+"…", true, float32(an.k)
+		chip = nItems(int64(an.found)) + " · " + fmtSize(an.foundSz)
+		tip = T("停止分析（Esc）")
 	case an != nil:
-		label, chip = "正在清理", fmtSize(planSize(an.plan))+" · "+fmtNum(int64(len(an.plan)))+" 项"
+		label, chip = T("正在清理"), fmtSize(planSize(an.plan))+" · "+nItems(int64(len(an.plan)))
 		if an.skipped > 0 {
-			tip = fmt.Sprintf("跳过 %d 项（%s 正在使用）", an.skipped, joinCN(an.apps))
+			tip = Tf("跳过 %d 项（%s 正在使用）", an.skipped, joinList(an.apps))
 		}
 	default:
 		items, skipped := a.idlePlan()
 		if s := planSize(items); s > 0 {
-			label, chip = "自动清理", fmtSize(s)+" · "+fmtNum(int64(len(items)))+" 项"
+			label, chip = T("自动清理"), fmtSize(s)+" · "+nItems(int64(len(items)))
 			if a.sz == szCompact {
 				chip = fmtSize(s)
 			}
-			tip = "把可安全清理的内容移到" + trashName() + "，清空前都可以还原"
+			tip = Tf("把可安全清理的内容移到%s，清空前都可以还原", trashName())
 		} else {
-			label, disabled = "已清理干净", true
+			label, disabled = T("已清理干净"), true
 		}
 		if skipped > 0 {
-			tip = fmt.Sprintf("%d 项正在使用，已跳过", skipped)
+			tip = Tf("%d 项正在使用，已跳过", skipped)
 		}
 		disabled = disabled || a.t == nil || a.scanning
 		if a.scanning {
-			label, chip = "正在扫描…", ""
+			label, chip = T("正在扫描…"), ""
 		} else if a.t == nil {
-			label, chip = "自动清理", ""
+			label, chip = T("自动清理"), ""
 		}
 	}
 	bg, fg := pal.text, pal.bg
@@ -485,7 +498,10 @@ func (a *app) bigButton(c *ui.Context) {
 	if disabled {
 		bg, fg = pal.panel2, pal.t3
 	}
-	e := ui.Row(c.Key("bFree")).Height(48).Padding(0, 10, 0, 18).Gap(9).Radius(24).AlignItems(ui.Center).
+	if a.scanning { // a status line, not a button: no fill, no chip
+		bg, fg = ui.Color{}, pal.t3
+	}
+	e := ui.Row(c.Key("bFree")).Height(48).Padding(0, 10, 0, 20).Gap(9).Radius(24).AlignItems(ui.Center).
 		Background(bg).TextColor(fg).Cursor(ui.CursorPointer).Shrink(0).Clip().
 		Draw(func(p *ui.Painter, r ui.Rect) {
 			p.Clip(r, r.H/2, func() { // the element's Clip covers its children, not its own paint
@@ -510,13 +526,12 @@ func (a *app) bigButton(c *ui.Context) {
 						{Color: ui.RGBA(255, 255, 255, 0), At: .35}, {Color: ui.RGBA(255, 255, 255, .55), At: .5}, {Color: ui.RGBA(255, 255, 255, 0), At: .65}}}, 0)
 					p.AnimationFrame()
 				}
+				a.paintDust(p, r, fg)
 			})
 		})
 	e.Children(func() {
 		if busy || a.scanning {
 			a.spinner(c, 13, fg)
-		} else {
-			icon(c, icoSparkle, 17, fg, 1.9)
 		}
 		ui.Text(c, label).FontSize(14.5).FontWeight(600).SingleLine()
 		if chip != "" {
@@ -542,6 +557,7 @@ func (a *app) bigButton(c *ui.Context) {
 	if disabled {
 		e.Disabled(true).DimDisabled(false).Cursor(ui.CursorDefault)
 		a.sheenOn = false
+		a.dustHot = false
 		return
 	}
 	hot := e.Hovered()
@@ -549,6 +565,7 @@ func (a *app) bigButton(c *ui.Context) {
 		a.sheenT0 = a.now
 	}
 	a.sheenOn = hot
+	a.dustHot = hot && !busy
 	// a plain lift, not a coloured halo: a tight contact shadow plus a soft one further down
 	shade := ui.RGBA(0, 0, 0, 1)
 	switch {
@@ -574,37 +591,34 @@ func (a *app) paintBurst(p *ui.Painter, r ui.Rect, k float64) {
 	cx, cy := r.X+r.W/2, r.Y+r.H/2
 	safe := a.pal.level[safety.Safe]
 	e := float32(easeOut(k))
-	fade := float32(1 - k)
-	// the ring
-	rw, rh := 80+120*e, 24+70*e
-	var ring ui.Path
-	for i := 0; i <= 48; i++ {
-		t := float64(i) / 48 * 2 * math.Pi
-		x, y := cx+rw*float32(math.Cos(t)), cy+rh*float32(math.Sin(t))
-		if i == 0 {
-			ring.MoveTo(x, y)
-		} else {
-			ring.LineTo(x, y)
-		}
-	}
-	p.StrokePath(&ring, 2*fade+.5, safe.Alpha(.5*fade))
-	// the sparks: two rings, the inner slower, each a short streak along its way
-	const n = 22
+	fade := float32(1 - easeIn(k))
+	// rays from under the button, flattened to its shape: a short dash leads, and a trail of
+	// dots it leaves behind. No ring.
+	const n = 18
 	for i := 0; i < n; i++ {
-		ang := float64(i)/n*2*math.Pi + float64(i%2)*.14
+		ang := float64(i)/n*2*math.Pi + .09
 		sp := float32(1)
 		if i%2 == 1 {
-			sp = .72
+			sp = .78
 		}
-		d0, d1 := (60+110*e)*sp, (60+110*e)*sp-18*fade
-		ca, sa := float32(math.Cos(ang)), float32(math.Sin(ang))*.62
-		var st ui.Path
-		st.MoveTo(cx+ca*d1, cy+sa*d1).LineTo(cx+ca*d0, cy+sa*d0)
+		ca, sa := float32(math.Cos(ang)), float32(math.Sin(ang))*.55
+		d := (70 + 120*e) * sp
 		col := safe
 		if i%3 == 0 {
 			col = a.pal.text
 		}
-		p.StrokePath(&st, 2.4*fade+.4, col.Alpha(.85*fade))
+		var st ui.Path
+		st.MoveTo(cx+ca*(d-12*fade), cy+sa*(d-12*fade)).LineTo(cx+ca*d, cy+sa*d)
+		p.StrokePath(&st, 1.6, col.Alpha(.85*fade))
+		var dots ui.Path
+		for j := 1; j <= 3; j++ {
+			dd := d - 12*fade - float32(j)*9*sp
+			if dd < 60 {
+				break
+			}
+			dots.Circle(cx+ca*dd, cy+sa*dd, 1.3-.25*float32(j))
+		}
+		p.FillPath(&dots, col.Alpha(.6*fade))
 	}
 	p.AnimationFrame()
 }
@@ -619,13 +633,10 @@ func (a *app) paintBurst(p *ui.Painter, r ui.Rect, k float64) {
 const (
 	pfNone = iota
 	pfList
-	pfDetail
 )
 
 const (
-	listMin   = 64 // a squeezed list: its header
-	detailMin = 46 // a squeezed detail: the name
-	detailSum = 74 // the detail as a summary: name, size and verdict
+	listMin = 64 // a squeezed list: its header
 )
 
 // Window size classes: each has its own column widths and its own density.
@@ -651,11 +662,11 @@ func sizeClass(W float32) int {
 func panelWidth(sz int, focus, trash bool) float32 {
 	switch {
 	case focus && trash:
-		return [3]float32{292, 352, 420}[sz]
+		return [3]float32{320, 384, 460}[sz]
 	case focus:
-		return [3]float32{276, 340, 420}[sz]
+		return [3]float32{304, 372, 460}[sz]
 	}
-	return [3]float32{168, 200, 236}[sz]
+	return [3]float32{184, 220, 256}[sz]
 }
 
 // sizeRight sets the panels' widths for this frame: none before the first scan finishes, then
@@ -669,19 +680,23 @@ func (a *app) sizeRight(c *ui.Context) {
 		a.slimT0 = a.now
 	}
 	inT := a.sceneOn() == sceneTrash
+	// a newly selected file opens its detail in the panel, which takes the focus to widen
+	if sel := a.fileSel(); sel != a.selOn || (sel && a.selected != a.selLast) {
+		if sel && !inT {
+			a.pf = pfList
+		}
+		a.selOn, a.selLast = sel, a.selected
+	}
 	slim := inT || a.pf != pfList // the list in its short form unless it has the focus
 	if slim != a.slim {
-		a.slim, a.slimT0 = slim, a.now // the panels' contents change form: let them rise in
+		a.slim = slim // a change of width only reflows the rows: no stagger
 	}
-	if full := a.pf == pfDetail && !inT; full != a.detFull {
-		a.detFull, a.detT0 = full, a.now
-	}
-	var tL, tD, tT float32
+	var tL, tT float32
 	if a.shown {
 		tL = panelWidth(a.sz, !inT && a.pf == pfList, false)
-		tD = panelWidth(a.sz, !inT && a.pf == pfDetail, false)
 		tT = panelWidth(a.sz, inT, true)
 	}
+	tD := float32(0) // the detail lives in the list's panel now
 	a.wL = float32(a.springTo(&a.wLsp, float64(tL)))
 	a.wD = float32(a.springTo(&a.wDsp, float64(tD)))
 	a.wT = float32(a.springTo(&a.wTsp, float64(tT)))
@@ -719,18 +734,15 @@ func (a *app) rightPane(c *ui.Context) {
 	}
 	inner := max(a.rightW, a.rightTo*b2f(a.rightEnter))
 	avail := max(0, H-3)
-	var tD, tT float32 // the trash panel has no height outside the trash view: the bin is in the chart
-	switch {
-	case inT:
-		tD, tT = detailMin, max(0, avail-listMin-detailMin)
-	case a.pf == pfDetail:
-		tD = max(240, avail*.62)
-	default:
-		tD = detailSum
+	// the trash panel has no height outside the trash view, and the detail none without a
+	// selection; the bin rests at the bottom (see dock) and grows into the chart in the trash
+	var tT float32
+	if inT {
+		tT = max(0, avail-listMin)
 	}
-	hD := max(0, float32(a.springTo(&a.hDsp, float64(tD))))
 	hT := max(0, float32(a.springTo(&a.hTsp, float64(tT))))
-	hL := max(0, avail-hD-hT)
+	hB := a.dockNat() * (1 - a.binS.heroK)
+	hL := max(0, avail-hT-hB)
 	a.rightHL = hL
 	// the squeezed list and detail fade out at their lower edge instead of cutting a line in half
 	fade := func(h, natural float32) { // call inside the panel
@@ -743,7 +755,11 @@ func (a *app) rightPane(c *ui.Context) {
 					{Color: pal.bg.Alpha(0), At: 0}, {Color: pal.bg, At: 1}}}, 0)
 			})
 	}
-	ui.Column(c.Key("right")).Width(a.rightW).Shrink(0).Clip().Children(func() {
+	right := ui.Column(c.Key("right")).Width(a.rightW).Shrink(0).Clip()
+	if pal.rule > 0 { // a ruled edge and the darker panel paper, for styles that need the boundary
+		right.Background(pal.panel).BorderStartWidth(1).BorderColor(pal.ink.Alpha(pal.rule))
+	}
+	right.Children(func() {
 		rin := ui.Column(c.Key("rin")).Width(inner).Grow(1).Shrink(0).AlignItems(ui.End)
 		rin.Children(func() {
 			lp := quiet(ui.Column(c.Key("plist")).Width(a.wL).Height(hL+1).Padding(1, 0, 0, 1).Shrink(0).Clip()).Children(func() {
@@ -752,22 +768,6 @@ func (a *app) rightPane(c *ui.Context) {
 			})
 			if lp.PressedInside() {
 				a.focusPanel(pfList)
-			}
-			dp := quiet(ui.Column(c.Key("pdetail")).Width(a.wD).Height(hD+1).Padding(1, 0, 0, 1).Shrink(0).Clip()).Children(func() {
-				switch {
-				case a.detFull:
-					a.detail(c)
-				case hD < detailSum-8:
-					a.detailLine(c)
-				default:
-					a.detailSummary(c)
-				}
-				if a.detFull {
-					fade(hD, 240)
-				}
-			})
-			if dp.PressedInside() {
-				a.focusPanel(pfDetail)
 			}
 			ui.Column(c.Key("ptrash")).Width(a.wT).Height(hT).Padding(1, 0, 0, 1).Shrink(0).Clip().Children(func() {
 				if hT > 1 && a.bin != nil {
@@ -785,9 +785,8 @@ func b2f(b bool) float32 {
 	return 0
 }
 
-// rightX and detailY locate the column and its detail panel (for tests).
-func (a *app) rightX() float32  { return a.winW - a.wL }
-func (a *app) detailY() float32 { return 2 + a.rightHL }
+// rightX locates the column (for tests).
+func (a *app) rightX() float32 { return a.winW - a.wL }
 
 // focusPanel brings the list or the detail forward (leaving the trash view if it was open).
 func (a *app) focusPanel(p int) {
@@ -795,6 +794,23 @@ func (a *app) focusPanel(p int) {
 		a.goScene(sceneBrowse)
 	}
 	a.pf = p
+}
+
+// hasSel says whether something below the focus is selected: with nothing selected the
+// selection is the focus itself, which the list's header already names.
+func (a *app) hasSel() bool {
+	n := a.selected
+	return a.t != nil && n != scan.None && n != a.focus && a.t.Attached(n)
+}
+
+// fileSel says whether the selection is a file (or an empty folder): the panel shows its
+// detail instead of the list. A folder with contents opens as the list.
+func (a *app) fileSel() bool {
+	if !a.hasSel() {
+		return false
+	}
+	nd := &a.t.Nodes[a.selected]
+	return !nd.IsDir() || nd.First == scan.None
 }
 
 // sceneOn is the scene the right column shows: the trash only while there is a bin.
@@ -829,7 +845,7 @@ func (a *app) diskBar(c *ui.Context) ui.Element {
 	_, dw := a.diskSpot(c)
 	free := ""
 	if d.ok {
-		free = fmtSize(d.free) + " 可用"
+		free = Tf("%s 可用", fmtSize(d.free))
 		if a.sz != szCompact {
 			free += " / " + fmtSize(d.total)
 		}
@@ -839,7 +855,7 @@ func (a *app) diskBar(c *ui.Context) ui.Element {
 			ui.Text(c, vol).FontSize(12.5).FontWeight(600).SingleLine().Ellipsis("…").Shrink(0).MaxWidth(dw * .45)
 			ui.Text(c, free).FontSize(12).TextColor(pal.t3).SingleLine().Shrink(1).Ellipsis("…")
 			ui.Spacer(c)
-			if a.btn(c.Key("rescan"), "", btnGhost, true, func() { a.rescanIcon(c) }).Tooltip("重新扫描").
+			if a.btn(c.Key("rescan"), "", btnGhost, true, func() { a.rescanIcon(c) }).Tooltip(T("重新扫描")).
 				Disabled(a.scanning || a.anal != nil).Clicked() {
 				a.startScan(a.root)
 			}
@@ -850,6 +866,7 @@ func (a *app) diskBar(c *ui.Context) ui.Element {
 			if tk > 0 {
 				p.Fill(ui.Rect{X: r.X + uw, Y: r.Y, W: max(2, r.W*float32(tk)), H: r.H}, pal.level[safety.Review], 0)
 			}
+			a.paintDiskDone(p, r)
 		})
 	})
 }
@@ -861,9 +878,23 @@ var diskW = [3]float32{240, 300, 360}
 // buttons on the right of the top strip.
 func (a *app) diskSpot(c *ui.Context) (x, w float32) {
 	W, _ := c.Size()
-	lw := W - a.rightW
+	lw := W - a.refRight()
 	w = max(160, min(diskW[a.sz], lw-2*124))
 	return (lw - w) / 2, w
+}
+
+// refRight is the right column's width that the chart side's centred parts (the disk line,
+// the clean bar) line up with. While the trash view comes and goes the column widens and
+// narrows under them; they hold the browse layout's place instead, so they leave straight up
+// or down from where they were and come back straight to where they will rest.
+func (a *app) refRight() float32 {
+	switch {
+	case a.tvK == 0:
+		return a.rightW
+	case a.tvOn:
+		return a.rightW0
+	}
+	return a.rightTo
 }
 
 // topY is where the top strip's controls sit, clear of the window buttons.

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"runtime"
 	"sort"
 	"strings"
@@ -55,6 +54,12 @@ func (a *app) runTimers(c *ui.Context) {
 	for _, fn := range due {
 		fn()
 	}
+}
+
+// wakeForTimers asks for a frame when the next timer is due. It runs at the end of the
+// view, so timers set later in the frame (by tickAnalysis or a click handler) still wake it;
+// without this they would wait for the next mouse move.
+func (a *app) wakeForTimers(c *ui.Context) {
 	if len(a.timers) > 0 {
 		next := a.timers[0].at
 		for _, t := range a.timers[1:] {
@@ -87,9 +92,9 @@ func (a *app) habitItems(scope int32, skip map[int32]bool) []cleanItem {
 	}
 	var out []cleanItem
 	for _, p := range a.habit.Candidates(a.t, a.ev, scope, skip) {
-		why := fmt.Sprintf("你曾手动删除 %d 个 %s", p.Match.D, p.Match.Label)
+		why := Tf("你曾手动删除 %d 个 %s", p.Match.D, habitLabel(p.Match.Label))
 		if p.Match.Seed {
-			why += "（示例历史）"
+			why += T("（示例历史）")
 		}
 		out = append(out, cleanItem{p.Node, trash.Meta{Size: p.Size, Dir: a.t.Nodes[p.Node].IsDir(), Source: trash.ByHabit,
 			Habit: p.Match.Label, Level: int(a.verdict(p.Node).Level())}, why})
@@ -176,19 +181,19 @@ func (a *app) idlePlan() (items []cleanItem, busy int) {
 	return
 }
 
-// appOf is the app name in an in-use reason ("Chrome 正在运行" → "Chrome").
+// appOf names what holds an item in use: the running app, or just "files" for a recent write.
 func appOf(why string) string {
-	if i := strings.Index(why, " 正在运行"); i > 0 {
-		return why[:i]
+	if why == recentWrite {
+		return T("文件")
 	}
-	return "文件"
+	return why
 }
 
 func trashName() string {
 	if runtime.GOOS == "darwin" {
-		return "废纸篓"
+		return T("废纸篓")
 	}
-	return "回收站"
+	return T("回收站")
 }
 
 // ------------------------------------------------------------------------------------------
@@ -291,7 +296,7 @@ func (a *app) cancelAnalysis() {
 		return
 	}
 	a.anal = nil
-	a.toast(ui.Toast{Title: "已停止分析，未删除任何内容"})
+	a.toast(ui.Toast{Title: T("已停止分析，未删除任何内容")})
 }
 
 // tickAnalysis advances the sweep; at the end it shows the plan for a beat, then throws it.
@@ -346,9 +351,9 @@ func (a *app) tickAnalysis(c *ui.Context) {
 	}
 	if len(an.plan) == 0 {
 		a.anal = nil
-		msg := "没有可安全清理的内容"
+		msg := T("没有可安全清理的内容")
 		if an.skipped > 0 {
-			msg += fmt.Sprintf("（%d 项正在使用，已跳过）", an.skipped)
+			msg += Tf("（%d 项正在使用，已跳过）", an.skipped)
 		}
 		a.toast(ui.Toast{Title: msg})
 		return
@@ -387,17 +392,17 @@ func (a *app) freeUp(items []cleanItem) {
 	size := planSize(live)
 	b := a.trashNodes(live, true)
 	wait := time.Duration(0)
-	if a.motion() {
+	if a.trashFX() {
 		wait = max(0, a.fly.lastLanding().Sub(a.now)) + 700*time.Millisecond
 	}
 	a.after(wait, func() {
-		title := fmt.Sprintf("已将 %d 项（%s）移至%s", len(live), fmtSize(size), trashName())
+		title := Tn(int64(len(live)), "已将 %d 项（%s）移至%s", len(live), fmtSize(size), trashName())
 		desc := ""
 		if habits > 0 {
-			desc = fmt.Sprintf("其中 %d 项依据你的习惯", habits)
+			desc = Tf("其中 %d 项依据你的习惯", habits)
 		}
 		a.toast(ui.Toast{ID: "freed", Title: title, Description: desc, Type: "success", Timeout: 7 * time.Second,
-			Action: "撤销", OnAction: func() { a.undo(b) }})
+			Action: T("撤销"), OnAction: func() { a.undo(b) }})
 	})
 }
 

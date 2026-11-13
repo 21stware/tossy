@@ -1,6 +1,9 @@
-// Package trash moves files to the operating system's trash (macOS Trash, freedesktop Trash,
-// Windows Recycle Bin) and keeps a journal of everything FanFree moved, so items can be
-// restored from inside the app and "empty" only ever deletes what FanFree put there.
+// Package trash is FanFree's own trash: a journal of marks. Putting something in the trash only
+// records it — the file stays where it is and the OS trash is never touched — so restoring is
+// just dropping the mark, and "empty" deletes exactly the marked paths, in place, for good.
+//
+// Journals written by earlier versions may hold items that were really moved into the OS trash
+// (Stored != Orig); those are still restored and purged through the OS mover.
 package trash
 
 import (
@@ -29,7 +32,7 @@ const (
 type Item struct {
 	ID     string    `json:"id"`
 	Orig   string    `json:"orig"`   // where it was
-	Stored string    `json:"stored"` // where it is now (inside the OS trash)
+	Stored string    `json:"stored"` // where it is now: Orig for a mark; inside the OS trash for legacy items
 	Info   string    `json:"info,omitempty"`
 	Size   int64     `json:"size"`
 	Dir    bool      `json:"dir"`
@@ -38,6 +41,8 @@ type Item struct {
 	Rule   string    `json:"rule,omitempty"`  // safety rule id
 	Habit  string    `json:"habit,omitempty"` // habit label, for Source == ByHabit
 	Level  int       `json:"level,omitempty"` // safety level when it was moved
+
+	purging bool // Empty is deleting it right now
 }
 
 // Meta is what the caller knows about a path it trashes.
@@ -53,6 +58,9 @@ type Meta struct {
 // ErrNotFound: unknown item id.
 var ErrNotFound = errors.New("trash: no such item")
 
+// ErrPurging: the item is being deleted by Empty right now.
+var ErrPurging = errors.New("trash: item is being deleted")
+
 // Bin is the journal. Methods are safe for concurrent use.
 type Bin struct {
 	mu      sync.Mutex
@@ -61,10 +69,8 @@ type Bin struct {
 	mover   mover
 }
 
-// mover is the OS-specific part; swapped out in tests.
+// mover is the OS-specific part, used only for legacy items that live in the OS trash.
 type mover interface {
-	// trash moves path into the trash and returns its new location (+ optional metadata file).
-	trash(path string) (stored, info string, err error)
 	// restore moves stored back to orig and removes metadata.
 	restore(it *Item) error
 	// purge permanently deletes the stored copy and metadata.
@@ -104,40 +110,32 @@ func newID() string {
 	return hex.EncodeToString(x[:])
 }
 
-// Move trashes path. Nothing is deleted: the OS trash keeps the bytes until Empty.
+// marked reports whether the item is a mark in place rather than a legacy OS-trash move.
+func (it *Item) marked() bool { return it.Stored == it.Orig }
+
+// Move puts path in FanFree's trash. It only records a mark: the file is not moved anywhere,
+// and nothing goes to the system trash. Bytes are freed only by Empty.
 func (b *Bin) Move(path string, meta Meta) (*Item, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	fi, err := os.Lstat(abs)
-	if err != nil {
-		return nil, err
-	}
-	stored, info, err := b.mover.trash(abs)
-	// moving a directory to a new parent rewrites its ".." entry, which needs write permission on
-	// the directory itself — read-only trees (package caches) need a temporary u+w
-	if errors.Is(err, os.ErrPermission) && fi.IsDir() && fi.Mode().Perm()&0o200 == 0 {
-		if os.Chmod(abs, fi.Mode().Perm()|0o200) == nil {
-			if stored, info, err = b.mover.trash(abs); err == nil {
-				os.Chmod(stored, fi.Mode().Perm())
-			} else {
-				os.Chmod(abs, fi.Mode().Perm())
-			}
-		}
-	}
-	if err != nil {
+	if _, err := os.Lstat(abs); err != nil {
 		return nil, fmt.Errorf("trash %s: %w", abs, err)
 	}
-	it := &Item{ID: newID(), Orig: abs, Stored: stored, Info: info, Size: meta.Size, Dir: meta.Dir, When: time.Now(), Source: meta.Source, Rule: meta.Rule, Habit: meta.Habit, Level: meta.Level}
+	it := &Item{ID: newID(), Orig: abs, Stored: abs, Size: meta.Size, Dir: meta.Dir, When: time.Now(), Source: meta.Source, Rule: meta.Rule, Habit: meta.Habit, Level: meta.Level}
 	if it.Source == "" {
 		it.Source = ByManual
 	}
 	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, o := range b.items {
+		if o.Orig == abs {
+			return nil, fmt.Errorf("trash %s: already in the trash", abs)
+		}
+	}
 	b.items[it.ID] = it
-	err = b.saveLocked()
-	b.mu.Unlock()
-	return it, err
+	return it, b.saveLocked()
 }
 
 // Restore puts an item back where it came from.
@@ -147,6 +145,13 @@ func (b *Bin) Restore(id string) (*Item, error) {
 	it := b.items[id]
 	if it == nil {
 		return nil, ErrNotFound
+	}
+	if it.purging {
+		return nil, ErrPurging
+	}
+	if it.marked() { // the file never left: just drop the mark
+		delete(b.items, id)
+		return it, b.saveLocked()
 	}
 	if _, err := os.Lstat(it.Orig); err == nil {
 		return nil, fmt.Errorf("restore: %s already exists", it.Orig)
@@ -171,26 +176,46 @@ func (b *Bin) Restore(id string) (*Item, error) {
 }
 
 // Empty permanently deletes the given items (all FanFree items if ids is nil). Returns bytes freed.
+// The lock is not held while files are deleted, which can take long: List and Size stay
+// responsive, and an item restored meanwhile is skipped.
 func (b *Bin) Empty(ids []string) (freed int64, err error) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if ids == nil {
 		for id := range b.items {
 			ids = append(ids, id)
 		}
 	}
-	var errs []error
+	var todo []*Item
 	for _, id := range ids {
-		it := b.items[id]
-		if it == nil {
-			continue
+		if it := b.items[id]; it != nil && !it.purging {
+			it.purging = true
+			todo = append(todo, it)
 		}
-		if e := b.mover.purge(it); e != nil {
+	}
+	b.mu.Unlock()
+
+	var errs []error
+	var gone []*Item
+	for _, it := range todo {
+		purge := b.mover.purge
+		if it.marked() {
+			purge = func(it *Item) error { return removeAll(it.Stored) }
+		}
+		if e := purge(it); e != nil {
 			errs = append(errs, e)
 			continue
 		}
+		gone = append(gone, it)
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, it := range todo {
+		it.purging = false
+	}
+	for _, it := range gone {
 		freed += it.Size
-		delete(b.items, id)
+		delete(b.items, it.ID)
 	}
 	if e := b.saveLocked(); e != nil {
 		errs = append(errs, e)

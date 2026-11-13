@@ -33,8 +33,9 @@ const (
 // app is the window's state. The view reads it on the main thread; background work changes it
 // through win.Update.
 type app struct {
-	win *mygo.Window
-	pal *palette
+	win    *mygo.Window
+	setWin *mygo.Window // the settings window while open
+	pal    *palette
 
 	// scan
 	root     string
@@ -51,7 +52,9 @@ type app struct {
 	rightTo          float32
 	rightEnter       bool // pushing in for the first time: the content keeps its final width
 	shown            bool
-	pf               int // which panel has focus: pfNone, pfList or pfDetail (the trash is the scene)
+	pf               int   // which panel has focus: pfNone, pfList or pfDetail (the trash is the scene)
+	selOn            bool  // something below the focus is selected (last frame)
+	selLast          int32 // the selection last frame
 	rightHL          float32
 	wL, wD, wT       float32 // each panel's width this frame
 	wTto             float32
@@ -59,20 +62,27 @@ type app struct {
 	sz               int       // window size class
 	slim             bool      // the list in its short form (it is narrow: something else has focus)
 	slimT0           time.Time // the panels changed form
-	detFull          bool      // the detail in full (focused) or as a summary
-	detT0            time.Time
+	fileOn           bool      // the panel shows a file's detail, not the list
+	fileT0           time.Time // when it last switched between the two
+	detNode          int32     // the file the detail shows (kept while it slides out)
 	askSp            spring
 	tvSp             spring
 	winW             float32
 	chartR           ui.Rect // the chart, last frame (the bin sits in its corner)
-	hDsp, hTsp       spring  // detail and trash panel heights; the list takes the rest
+	hTsp             spring  // the trash panel height; the list takes the rest
 	tvTw             tween   // the left side's trash-scene state
 	tvK              float32
+	rightW0          float32 // the right column's width when the trash view began to open
+	safeR            float32 // the trash view's safety block, from the window's right edge
+	safeH            float32 // and its height, last frame
 	tvOn             bool
 	keepMode         bool      // tests: hold a.mode as set
 	burstT0          time.Time // the clean button's press
 	sheenOn          bool      // the big button: hovered last frame, and when its sheen started
 	sheenT0          time.Time
+	dustHot          bool // the big button is hovered: its glitter dust drifts
+	dustK            tween
+	dustT0           time.Time
 	upOn             bool
 	upT0             time.Time
 
@@ -100,6 +110,7 @@ type app struct {
 	planV       int
 	freedTotal  int64
 	trashMoving int              // moves in flight (background)
+	emptying    bool             // Empty is deleting files (background)
 	trashed     map[string]int32 // trash item id → node of this scan, for restores
 
 	fly       flight
@@ -117,9 +128,13 @@ type app struct {
 		ok          bool
 	}
 	scanStart time.Time
+	scanTxt   scanText // the path readout and blips while scanning
+	rescan    rescanFX // a rescan's play on the sunburst on screen
 
 	set, saved   settings
 	showSettings bool
+	setTab       int // settings category on show
+	groupN       int // entries drawn so far in the settings group being built
 	scene        int
 	anal         *analysis
 
@@ -147,6 +162,7 @@ type app struct {
 	askOutT0     time.Time
 	askTw        tween // the right panel quiets while a confirm is open
 	askK         float32
+	git          gitState
 	compOpen     bool // 构成与最大的文件
 	prevShut     bool // 预览 (open by default)
 	whyOpen      bool
@@ -157,6 +173,7 @@ type app struct {
 
 	// stats for the footer
 	drawMs   float64
+	fx       themeFX
 	arcCount int
 }
 
@@ -209,6 +226,7 @@ func (a *app) startScan(root string) {
 	a.root, a.scanning, a.scanErr = root, true, nil
 	a.prog = &scan.Progress{}
 	a.scanStart = time.Now()
+	a.scanTxt, a.rescan = scanText{}, rescanFX{}
 	prog := a.prog
 	opt := scan.Options{Progress: prog, Exclude: a.excludes(), CrossDevice: a.set.CrossDevice}
 	a.anal, a.scene = nil, sceneBrowse
@@ -236,13 +254,25 @@ func (a *app) setTree(t *scan.Tree, err error) {
 	if t == nil {
 		return
 	}
+	// a rescan switches straight to the new data, at the folder that was in focus: the intro
+	// plays only for the first tree
+	focus := int32(0)
+	first := a.t == nil
+	if !first && a.focus != 0 {
+		if n := t.Find(a.t.Path(a.focus)); n != scan.None && t.Nodes[n].IsDir() {
+			focus = n
+		}
+	}
+	a.hideMarked(t)
 	a.t, a.ev = t, safety.New(t)
-	a.focus, a.selected, a.hover = 0, 0, scan.None
+	a.forgetGit()
+	a.focus, a.selected, a.hover = focus, focus, scan.None
 	a.ver++
 	a.sun.reset()
-	if a.motion() {
+	if first && a.motion() {
 		a.sun.intro = time.Now()
 	}
+	a.crtOn()
 	a.refreshProcs(nil)
 }
 
@@ -350,9 +380,10 @@ func (a *app) zoomTo(i int32) {
 		return
 	}
 	a.sun.zoomFrom(a)
-	a.rowsT0, a.rowsDx = a.now, 14
+	a.inkRefresh(false)
+	a.rowsT0, a.rowsDx = a.now, 1
 	if a.isUnder(a.focus, i) {
-		a.rowsDx = -14 // going up: rows come in from the left
+		a.rowsDx = -1 // going up: rows come in from the left
 	}
 	a.focus = i
 	if !a.isUnder(a.selected, i) || a.selected == i {
@@ -380,26 +411,48 @@ func (a *app) isUnder(i, anc int32) bool {
 // canTrash says whether the user may move i to the trash, and why not.
 func (a *app) canTrash(i int32) (bool, string) {
 	if i <= 0 {
-		return false, "扫描根目录不能删除"
+		return false, T("扫描根目录不能删除")
 	}
 	n := &a.t.Nodes[i]
 	if n.Flags&scan.FlagCloud != 0 {
-		return false, "云端占位文件，删除可能同步删除云端数据"
+		return false, T("云端占位文件，删除可能同步删除云端数据")
 	}
 	if a.verdict(i).Level() == safety.Protected {
-		return false, "系统保护：" + a.verdict(i).Reason()
+		return false, Tf("系统保护：%s", T(a.verdict(i).Reason()))
 	}
 	return true, ""
 }
 
+// hideMarked takes what is in FanFree's trash out of a fresh scan: a trashed item is only a mark
+// and its file is still on disk, so the scanner found it again. Deepest first, so a mark inside a
+// marked folder is still reachable when its turn comes; restoring one reattaches it.
+func (a *app) hideMarked(t *scan.Tree) {
+	a.trashed = nil
+	if a.bin == nil {
+		return
+	}
+	items := a.bin.List()
+	sort.Slice(items, func(i, j int) bool { return len(items[i].Orig) > len(items[j].Orig) })
+	for _, it := range items {
+		if n := t.Find(it.Orig); n > 0 {
+			t.Remove(n)
+			if a.trashed == nil {
+				a.trashed = map[string]int32{}
+			}
+			a.trashed[it.ID] = n
+		}
+	}
+}
+
 // trashNodes removes nodes from the tree at once (the chart and list update in this frame),
-// then moves them to the OS trash in the background. A failed move puts the node back.
+// then marks them in FanFree's trash in the background (files stay put; nothing goes to the
+// system trash). A failed mark puts the node back.
 func (a *app) trashNodes(items []cleanItem, many bool) *batch {
 	b := &batch{}
 	if a.bin == nil || len(items) == 0 {
 		return b
 	}
-	if a.motion() {
+	if a.trashFX() {
 		a.throw(items, many)
 	}
 	a.chartMorph(400 * time.Millisecond)
@@ -473,7 +526,7 @@ func (a *app) trashNodes(items []cleanItem, many bool) *batch {
 					a.t.Reattach(n)
 				}
 				a.ver++
-				a.toast(ui.Toast{Title: fmt.Sprintf("%d 项未能移到废纸篓", len(failed)), Description: firstLine(errs[0]), Type: "error"})
+				a.toast(ui.Toast{Title: Tf("%d 项未能移到废纸篓", len(failed)), Description: firstLine(errs[0]), Type: "error"})
 			}
 			if a.habit != nil {
 				a.habit.Save()
@@ -498,7 +551,7 @@ func (a *app) learn(i int32, dd, rr int) {
 	sub := habit.Subject{Path: a.t.Path(i), Dir: n.IsDir(), Size: n.Size, AgeDays: a.ev.AgeDays(i)}
 	if l := a.habit.Learn(sub, dd, rr); l != "" && dd > 0 {
 		a.after(380*time.Millisecond, func() {
-			a.toast(ui.Toast{Title: "已学会：" + l + " · 自动清理会一并处理同类项", Timeout: 5200 * time.Millisecond})
+			a.toast(ui.Toast{Title: Tf("已学会：%s · 自动清理会一并处理同类项", habitLabel(l)), Timeout: 5200 * time.Millisecond})
 		})
 	}
 }
@@ -532,9 +585,9 @@ func (a *app) restore(ids []string) {
 		a.habit.Save()
 	}
 	if failed > 0 {
-		a.toast(ui.Toast{Title: fmt.Sprintf("%d 项未能恢复", failed), Description: "原位置已有同名文件，或文件已不在废纸篓", Type: "error"})
+		a.toast(ui.Toast{Title: Tf("%d 项未能恢复", failed), Description: T("原位置已有同名文件，或文件已不在废纸篓"), Type: "error"})
 	} else if unlearned > 0 {
-		a.toast(ui.Toast{Title: "已记录：以后不再按此习惯自动清理同类项"})
+		a.toast(ui.Toast{Title: T("已记录：以后不再按此习惯自动清理同类项")})
 	}
 	_ = ok
 }
@@ -587,13 +640,13 @@ func fmtNum(n int64) string {
 func ageStr(days int) string {
 	switch {
 	case days < 1:
-		return "今天"
+		return T("今天")
 	case days < 30:
-		return fmt.Sprintf("%d 天前", days)
+		return Tn(int64(days), "%d 天前", days)
 	case days < 365:
-		return fmt.Sprintf("%d 个月前", (days+15)/30)
+		return Tn(int64((days+15)/30), "%d 个月前", (days+15)/30)
 	}
-	return fmt.Sprintf("%.1f 年前", float64(days)/365)
+	return Tf("%.1f 年前", float64(days)/365)
 }
 
 func fmtFloat1(f float64) string {
@@ -607,7 +660,7 @@ func fmtFloat1(f float64) string {
 func kindOf(name string) string {
 	ext := strings.TrimPrefix(filepath.Ext(name), ".")
 	if ext == "" || len(ext) > 8 {
-		return "文件"
+		return T("文件")
 	}
-	return strings.ToUpper(ext) + " 文件"
+	return Tf("%s 文件", strings.ToUpper(ext))
 }

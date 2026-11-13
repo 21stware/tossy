@@ -179,7 +179,7 @@ func (a *app) paintTrashSun(p *ui.Painter, r ui.Rect) {
 	ts := a.syncTrashSun()
 	now := p.Now()
 	// the disk chart's frame: same centre, radius and hole
-	s.cx, s.cy = r.X+r.W/2, r.Y+r.H/2
+	s.cx, s.cy = float32(math.Round(float64(r.X+r.W/2))), float32(math.Round(float64(r.Y+r.H/2))) // whole pixels: path masks cache
 	pad := float32(30)
 	if pal.instr != instrNone {
 		pad = 62
@@ -357,28 +357,29 @@ func (a *app) paintTrashSun(p *ui.Painter, r ui.Rect) {
 	if hl != nil {
 		info = hl
 	}
-	name, size, sub := trashName(), "空", "0 项"
+	name, size, sub := trashName(), T("空"), nItems(0)
 	if info != nil && info.cnt > 0 {
-		size, sub = fmtSize(info.size), fmtNum(int64(info.cnt))+" 项"
+		size, sub = fmtSize(info.size), nItems(int64(info.cnt))
 		if info != ts.root {
 			parts := strings.Split(info.name, "/")
 			name = parts[len(parts)-1]
 		}
 		if info.it != nil {
-			sub = levelTitles[lvOf(info.it)]
+			sub = T(levelTitles[lvOf(info.it)])
 		}
 	}
 	if ts.hot {
-		sub = "← 返回磁盘"
+		sub = T("← 返回磁盘")
 	}
 	fs, big := max(11, s.r0*.11), max(18, s.r0*.25)
-	centerText(p, s.cx, s.cy-s.r0*.28, clipText(p, name, s.r0*1.5, fs, 400), fs, 400, pal.t3.Alpha(ca), "")
+	cg := max(s.r0*.28, big*.5+fs*.7+2) // the lines never overlap on a small hole
+	centerText(p, s.cx, s.cy-cg, clipText(p, name, s.r0*1.5, fs, 400), fs, 400, pal.t3.Alpha(ca), "")
 	centerText(p, s.cx, s.cy+s.r0*.02, size, big, 600, pal.text.Alpha(ca), "")
 	sc := pal.t3
 	if ts.hot {
 		sc = pal.text
 	}
-	centerText(p, s.cx, s.cy+s.r0*.28, sub, max(10, s.r0*.1), 400, sc.Alpha(ca), "")
+	centerText(p, s.cx, s.cy+cg, sub, max(10, s.r0*.1), 400, sc.Alpha(ca), "")
 }
 
 // trashChartInput: hover lights arcs and their rows; the centre leads back to the disk.
@@ -419,7 +420,7 @@ func (a *app) trashChartInput(chart ui.Element) {
 		chart.Tooltip(ts.hl.name + "\n" + fmtSize(ts.hl.size))
 	}
 	if out {
-		chart.Tooltip("返回磁盘")
+		chart.Tooltip(T("返回磁盘"))
 	}
 	if chart.Clicked() && (ts.hot || (out && ts.hl == nil)) {
 		a.goScene(sceneBrowse)
@@ -430,15 +431,15 @@ func (a *app) trashChartInput(chart ui.Element) {
 func (a *app) trashSummary() string {
 	items := a.bin.List()
 	if len(items) == 0 {
-		return "空"
+		return T("空")
 	}
 	var total int64
 	for _, it := range items {
 		total += it.Size
 	}
-	s := fmtNum(int64(len(items))) + " 项 · " + fmtSize(total)
+	s := nItems(int64(len(items))) + " · " + fmtSize(total)
 	if pre := a.tsun.pre; pre != "" {
-		s += " · 都在 " + displayHome(filepath.FromSlash(pre)) + " 下"
+		s += Tf(" · 都在 %s 下", displayHome(filepath.FromSlash(pre)))
 	}
 	return s
 }
@@ -447,14 +448,16 @@ func (a *app) trashSummary() string {
 func (a *app) trashLegend(c *ui.Context) {
 	pal := a.pal
 	ts := a.syncTrashSun()
-	ui.Column(c.Key("tlegend")).Absolute().Left(20).Bottom(12).Gap(5).MaxWidth(320).Opacity(a.tvK).PassThrough().Children(func() {
+	// at window level, not in the chart: it slides in from beyond the window's left edge, on a
+	// level line (the chart's foot moves while the clean bar drops away)
+	ui.Column(c.Key("tlegend")).Absolute().Left(20).Bottom(12).Gap(5).MaxWidth(320).ZIndex(2).Translate(-340*(1-a.tvK), 0).PassThrough().Children(func() {
 		if ts.root == nil {
 			return
 		}
 		ih, is, _ := toHSL(pal.ink)
 		for i, k := range ts.root.kids {
 			if i == 5 {
-				ui.Text(c, fmtNum(int64(len(ts.root.kids)-5))+" 个其他位置").FontSize(11).TextColor(pal.t4)
+				ui.Text(c, Tf("%s 个其他位置", fmtNum(int64(len(ts.root.kids)-5)))).FontSize(11).TextColor(pal.t4)
 				break
 			}
 			col := hsl(ih+float32(k.x0+k.x1)*14, is*.35, 40, 1)
@@ -488,9 +491,21 @@ func (a *app) trashSafety(c *ui.Context) {
 	if total == 0 {
 		return
 	}
-	ui.Column(c.Key("tsafe")).Absolute().Right(20).Top(14).Width(220).Gap(6).Opacity(a.tvK).PassThrough().Children(func() {
-		ui.Text(c, "安全性").FontSize(11).FontWeight(600).TextColor(pal.t3)
-		ui.Box(c.Key("tsbar")).Height(5).Radius(2.5).Clip().Draw(func(p *ui.Painter, r ui.Rect) {
+	// as wide as its longest line, no wider: a label, a thin bar, then one line per level. It
+	// drops in from above the window, straight down to the chart's top right as the trash view
+	// lays it out (held there on the way out, while the column narrows again)
+	if a.tvOn || a.safeR == 0 {
+		a.safeR = a.rightTo + 20
+	}
+	top := topY(c) + 30 + 16
+	h := a.safeH
+	if h == 0 {
+		h = 100
+	}
+	ui.Column(c.Key("tsafe")).Absolute().Right(a.safeR).Top(top).MaxWidth(200).Gap(5).ZIndex(2).
+		Translate(0, -(top+h+8)*(1-a.tvK)).PassThrough().Draw(func(p *ui.Painter, r ui.Rect) { a.safeH = r.H }).Children(func() {
+		ui.Text(c, T("安全性")).FontSize(10.5).FontWeight(600).TextColor(pal.t4)
+		ui.Box(c.Key("tsbar")).Height(3).Radius(1.5).Margin(0, 0, 2, 0).Clip().Draw(func(p *ui.Painter, r ui.Rect) {
 			x := r.X
 			for lv := range sums {
 				if sums[lv] > 0 {
@@ -504,11 +519,12 @@ func (a *app) trashSafety(c *ui.Context) {
 			if cnt[lv] == 0 {
 				continue
 			}
-			ui.Row(c.Key(lv)).Gap(7).AlignItems(ui.Center).Children(func() {
-				ui.Box(c).Size(8, 8).Radius(4).Background(pal.level[lv])
-				ui.Text(c, name).FontSize(11.5).TextColor(pal.t2).SingleLine().Grow(1).Shrink(1).Ellipsis("…")
-				ui.Text(c, fmtNum(int64(cnt[lv]))+" 项").FontSize(11).TextColor(pal.t4).SingleLine()
-				ui.Text(c, fmtSize(sums[lv])).FontSize(11).Font(pal.mono).TextColor(pal.t3).SingleLine()
+			ui.Row(c.Key(lv)).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Size(6, 6).Radius(3).Background(pal.level[lv]).Shrink(0)
+				ui.Text(c, name).FontSize(11).TextColor(pal.t2).SingleLine().Shrink(1).Ellipsis("…")
+				ui.Spacer(c).MinWidth(10)
+				ui.Text(c, fmtNum(int64(cnt[lv]))).FontSize(10).Font(pal.mono).TextColor(pal.t4).SingleLine().Shrink(0)
+				ui.Text(c, fmtSize(sums[lv])).FontSize(10.5).Font(pal.mono).TextColor(pal.t3).SingleLine().Shrink(0)
 			})
 		}
 	})

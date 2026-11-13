@@ -15,9 +15,9 @@ const (
 	artPlate                     // cel-shaded armour plates with ink outlines (mech)
 	artBlueprint                 // white linework on blue, faint washes
 	artPhosphor                  // green phosphor: dim bodies, glowing edges
-	artSwiss                     // flat primaries, square corners, paper gaps
 	artTE                        // light grey hardware plates, one orange accent per ring
 	artInk                       // e-ink: greys, black outlines, hatching, no motion
+	artToon                      // cartoon cels: candy fills, thick navy ink, a glossy highlight
 )
 
 // instrStyle is the instrument overlay drawn around the chart.
@@ -29,7 +29,6 @@ const (
 	instrMech
 	instrBlueprint
 	instrTerminal
-	instrSwiss
 	instrTE
 )
 
@@ -37,11 +36,14 @@ const (
 type deco int
 
 const (
-	decoNone  deco = iota
-	decoGrid       // drafting grid
-	decoScan       // CRT scanlines + vignette
-	decoDots       // dot matrix
-	decoPaper      // faint paper fibres
+	decoNone   deco = iota
+	decoGrid        // drafting grid
+	decoScan        // CRT scanlines + vignette
+	decoDots        // dot matrix
+	decoPaper       // faint paper fibres
+	decoPolka       // big soft polka dots
+	decoHearts      // scattered little hearts
+	decoPaint       // a painter's splashes and drops
 )
 
 // palette is everything a visual style decides; views read only from here.
@@ -65,6 +67,7 @@ type palette struct {
 	corner    float32  // sector corner radius
 	gap       float32  // ring gap
 	motion    bool     // zoom tweens, intro, flights; off for e-ink
+	rule      float32  // a hairline between the chart and the side panel (0: none)
 	glow      bool
 
 	// controls
@@ -74,7 +77,9 @@ type palette struct {
 }
 
 // holo styles paint translucent bodies with bright edges and light labels.
-func (p *palette) holo() bool { return p.art == artHolo || p.art == artPhosphor || p.art == artBlueprint }
+func (p *palette) holo() bool {
+	return p.art == artHolo || p.art == artPhosphor || p.art == artBlueprint
+}
 
 var levelsDefault = [4]ui.Color{ui.Hex("#6fc39a"), ui.Hex("#d4a656"), ui.Hex("#de7f86"), ui.Hex("#7f838e")}
 
@@ -123,7 +128,7 @@ var palettes = []*palette{
 		level: [4]ui.Color{ui.Hex("#9cf0c0"), ui.Hex("#ffe27a"), ui.Hex("#ffa8a8"), ui.Hex("#a9bedb")},
 		ramp:  [][4]float32{{0, 212, 30, 88}, {1, 212, 30, 88}},
 		art:   artBlueprint, instr: instrBlueprint, deco: decoGrid, agg: ui.RGBA(255, 255, 255, .06), ink: ui.RGB(255, 255, 255), labelText: ui.RGBA(255, 255, 255, .95),
-		corner: 0, gap: 2, motion: true, font: "monospace", mono: "monospace", radius: 0,
+		corner: 0, gap: 2, motion: true, rule: .45, font: "monospace", mono: "monospace", radius: 0,
 	},
 	{
 		name: "phosphor", label: "终端", desc: "磷光屏：绿色辉光、扫描线与命令行读数", dark: true,
@@ -137,18 +142,6 @@ var palettes = []*palette{
 		corner: 0, gap: 2, motion: true, glow: true, font: "monospace", mono: "monospace", radius: 0,
 	},
 	{
-		name: "swiss", label: "瑞士", desc: "瑞士 / 包豪斯：纸白底、原色色块、直角与网格排版", dark: false,
-		bg: ui.Hex("#f1eee6"), panel: ui.Hex("#ffffff"), panel2: ui.Hex("#f6f4ee"), line: ui.RGBA(0, 0, 0, .14),
-		hov: ui.RGBA(0, 0, 0, .04), sel: ui.RGBA(226, 35, 26, .10),
-		text: ui.Hex("#111111"), t2: ui.Hex("#333333"), t3: ui.Hex("#6b6b6b"), t4: ui.Hex("#a3a3a3"),
-		accent: ui.Hex("#e2231a"), accentText: ui.Hex("#ffffff"), amber: ui.Hex("#111111"),
-		level: [4]ui.Color{ui.Hex("#1f6fd1"), ui.Hex("#f2b705"), ui.Hex("#e2231a"), ui.Hex("#9a9a9a")},
-		ramp: [][4]float32{{0, 3, 80, 50}, {.25, 3, 80, 50}, {.2501, 46, 95, 52}, {.5, 46, 95, 52}, {.5001, 214, 75, 46}, {.75, 214, 75, 46},
-			{.7501, 0, 0, 16}, {1, 0, 0, 16}},
-		art: artSwiss, instr: instrSwiss, agg: ui.RGBA(0, 0, 0, .07), ink: ui.RGB(17, 17, 17), labelText: ui.Hex("#111111"),
-		corner: 0, gap: 3, motion: true, radius: 0,
-	},
-	{
 		name: "te", label: "工业", desc: "Teenage Engineering 式工业风：浅灰机身、橙色强调、编号与点阵", dark: false,
 		bg: ui.Hex("#dededa"), panel: ui.Hex("#ebebe8"), panel2: ui.Hex("#f6f6f4"), line: ui.RGBA(0, 0, 0, .1),
 		hov: ui.RGBA(0, 0, 0, .04), sel: ui.RGBA(255, 90, 31, .12),
@@ -160,7 +153,7 @@ var palettes = []*palette{
 		corner: 6, gap: 3, motion: true, mono: "monospace", radius: 10,
 	},
 	{
-		name: "eink", label: "墨水屏", desc: "E-ink：纸张底色、纯灰阶与阴影线，无动画，省电护眼", dark: false,
+		name: "eink", label: "墨水屏", desc: "E-ink：纸张底色、纯灰阶与阴影线，只有废纸篓以分步刷新动起来，省电护眼", dark: false,
 		bg: ui.Hex("#f2efe7"), panel: ui.Hex("#f2efe7"), panel2: ui.Hex("#e8e4da"), line: ui.RGBA(0, 0, 0, .2),
 		hov: ui.RGBA(0, 0, 0, .05), sel: ui.RGBA(0, 0, 0, .1),
 		text: ui.Hex("#1b1b1b"), t2: ui.Hex("#3a3a3a"), t3: ui.Hex("#666666"), t4: ui.Hex("#9a9a9a"),
@@ -169,6 +162,47 @@ var palettes = []*palette{
 		ramp:  [][4]float32{{0, 0, 0, 62}, {.5, 0, 0, 78}, {1, 0, 0, 62}},
 		art:   artInk, deco: decoPaper, agg: ui.RGBA(0, 0, 0, .06), ink: ui.RGB(27, 27, 27), labelText: ui.Hex("#1b1b1b"),
 		corner: 0, gap: 2, mono: "monospace", radius: 3,
+	},
+	{
+		name: "happy", label: "欢乐", desc: "七位好朋友：焦糖熊、薰衣草兔、奶油狗、薄荷猫、蜜桃熊、湖水龟、樱花狐，配水手蓝与波点", dark: false,
+		bg: ui.Hex("#fff6e8"), panel: ui.Hex("#fffbf3"), panel2: ui.Hex("#fdebd0"), line: ui.RGBA(35, 45, 90, .12),
+		hov: ui.RGBA(47, 95, 168, .06), sel: ui.RGBA(47, 95, 168, .13),
+		text: ui.Hex("#22305a"), t2: ui.Hex("#4a5579"), t3: ui.Hex("#7d849f"), t4: ui.Hex("#adb1c4"),
+		accent: ui.Hex("#2f5fa8"), accentText: ui.Hex("#ffffff"), amber: ui.Hex("#f5b82e"),
+		level: [4]ui.Color{ui.Hex("#3bb58a"), ui.Hex("#f5a524"), ui.Hex("#e8546a"), ui.Hex("#a59bc9")},
+		// seven bands, one per friend's own pastel fur, ordered so neighbours never look alike:
+		// tan bear, lavender bunny, butter pup, mint cat, peach-cream bear, aqua turtle, pink fox
+		ramp: [][4]float32{{0, 30, 40, 64}, {.12, 30, 40, 64}, {.143, 265, 45, 80}, {.26, 265, 45, 80}, {.286, 404, 75, 80}, {.4, 404, 75, 80},
+			{.429, 515, 45, 74}, {.54, 515, 45, 74}, {.571, 736, 65, 85}, {.68, 736, 65, 85}, {.714, 905, 45, 74}, {.83, 905, 45, 74},
+			{.857, 1063, 75, 83}, {.97, 1063, 75, 83}, {1, 1110, 40, 64}},
+		art: artToon, deco: decoPolka, agg: ui.RGBA(35, 31, 74, .06), ink: ui.RGB(35, 31, 74), labelText: ui.Hex("#23204a"),
+		corner: 7, gap: 2.5, motion: true, mono: "monospace", radius: 14,
+	},
+	{
+		name: "pinky", label: "粉粉", desc: "粉色小狐狸：樱花粉、莓果红、薰衣草紫与奶油白，软萌描边与小爱心", dark: false,
+		bg: ui.Hex("#fff0f4"), panel: ui.Hex("#fff7f9"), panel2: ui.Hex("#ffdfe8"), line: ui.RGBA(122, 46, 92, .12),
+		hov: ui.RGBA(236, 95, 145, .07), sel: ui.RGBA(236, 95, 145, .14),
+		text: ui.Hex("#5a2546"), t2: ui.Hex("#7e4b6a"), t3: ui.Hex("#a7809a"), t4: ui.Hex("#cdb0c2"),
+		accent: ui.Hex("#ec5f91"), accentText: ui.Hex("#ffffff"), amber: ui.Hex("#b58ae0"),
+		level: [4]ui.Color{ui.Hex("#5cc7a0"), ui.Hex("#f5a25d"), ui.Hex("#e8457e"), ui.Hex("#b4a3d6")},
+		// fur pink, inner-ear berry, the flower's lavender, muzzle cream, lilac, blush peach
+		ramp: [][4]float32{{0, 342, 82, 74}, {.14, 342, 82, 74}, {.167, 330, 64, 62}, {.3, 330, 64, 62}, {.333, 268, 60, 76}, {.47, 268, 60, 76},
+			{.5, 352, 92, 84}, {.63, 352, 92, 84}, {.667, 292, 46, 72}, {.8, 292, 46, 72}, {.833, 375, 88, 80}, {.97, 375, 88, 80}, {1, 342, 82, 74}},
+		art: artToon, deco: decoHearts, agg: ui.RGBA(122, 46, 92, .06), ink: ui.RGB(122, 46, 92), labelText: ui.Hex("#5a2546"),
+		corner: 9, gap: 2.5, motion: true, mono: "monospace", radius: 16,
+	},
+	{
+		name: "greeny", label: "绿绿", desc: "绿色小画家猫：薄荷绿、湖水青、奶油白，颜料飞溅的画室", dark: false,
+		bg: ui.Hex("#effaf4"), panel: ui.Hex("#f7fdfa"), panel2: ui.Hex("#d9f2e6"), line: ui.RGBA(24, 74, 66, .12),
+		hov: ui.RGBA(38, 165, 138, .07), sel: ui.RGBA(38, 165, 138, .14),
+		text: ui.Hex("#1d4440"), t2: ui.Hex("#43695f"), t3: ui.Hex("#7a988f"), t4: ui.Hex("#adc4bc"),
+		accent: ui.Hex("#22a386"), accentText: ui.Hex("#ffffff"), amber: ui.Hex("#ffc244"),
+		level: [4]ui.Color{ui.Hex("#2bb38c"), ui.Hex("#f2a33a"), ui.Hex("#ea5f62"), ui.Hex("#9aa8c4")},
+		// mint fur, deep teal, cream muzzle, sea glass, leaf, and the yellow on the palette
+		ramp: [][4]float32{{0, 158, 56, 66}, {.14, 158, 56, 66}, {.167, 174, 52, 48}, {.3, 174, 52, 48}, {.333, 44, 78, 86}, {.47, 44, 78, 86},
+			{.5, 190, 50, 68}, {.63, 190, 50, 68}, {.667, 128, 44, 60}, {.8, 128, 44, 60}, {.833, 46, 96, 66}, {.97, 46, 96, 66}, {1, 158, 56, 66}},
+		art: artToon, deco: decoPaint, agg: ui.RGBA(24, 74, 66, .06), ink: ui.RGB(24, 74, 66), labelText: ui.Hex("#1d4440"),
+		corner: 8, gap: 2.5, motion: true, mono: "monospace", radius: 14,
 	},
 }
 
