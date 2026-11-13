@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fanfree/fanfree/engine/gitrepo"
-	"github.com/fanfree/fanfree/engine/scan"
+	"github.com/21stware/tossy/engine/gitrepo"
+	"github.com/21stware/tossy/engine/scan"
 )
 
 // Verdict for one node.

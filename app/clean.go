@@ -8,9 +8,9 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/safety"
-	"github.com/fanfree/fanfree/engine/scan"
-	"github.com/fanfree/fanfree/engine/trash"
+	"github.com/21stware/tossy/engine/safety"
+	"github.com/21stware/tossy/engine/scan"
+	"github.com/21stware/tossy/engine/trash"
 )
 
 // The two ways to clean, as in the prototype:

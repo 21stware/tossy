@@ -7,8 +7,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/scan"
-	"github.com/fanfree/fanfree/engine/trash"
+	"github.com/21stware/tossy/engine/scan"
+	"github.com/21stware/tossy/engine/trash"
 )
 
 // flight throws removed items into the bin, as the prototype's throwItems: the source dissolves

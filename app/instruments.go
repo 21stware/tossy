@@ -4,13 +4,13 @@ import (
 	"time"
 
 	"fmt"
-	"github.com/fanfree/fanfree/engine/safety"
+	"github.com/21stware/tossy/engine/safety"
 	"math"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/scan"
+	"github.com/21stware/tossy/engine/scan"
 )
 
 // Instrument layers drawn around the sunburst, one per style. They read a.sun's geometry from
@@ -164,7 +164,7 @@ func (a *app) instrBlueprint(p *ui.Painter, r ui.Rect) {
 	box.MoveTo(tb.X, tb.Y+22).LineTo(tb.X+tb.W, tb.Y+22)
 	box.MoveTo(tb.X+110, tb.Y+22).LineTo(tb.X+110, tb.Y+tb.H)
 	p.StrokePath(&box, .9, ink.Alpha(.8))
-	a.monoText(p, tb.X+8, tb.Y+5, "FANFREE · DISK SURVEY", 10, ink)
+	a.monoText(p, tb.X+8, tb.Y+5, "TOSSY · DISK SURVEY", 10, ink)
 	a.monoText(p, tb.X+8, tb.Y+27, fmt.Sprintf("SHEET %d/%d", a.depth(a.focus)+1, a.depth(a.focus)+1), 9, ink.Alpha(.75))
 	a.monoText(p, tb.X+8, tb.Y+40, a.modeName(), 9, ink.Alpha(.75))
 	a.monoText(p, tb.X+118, tb.Y+27, fmt.Sprintf("SECT %d", a.arcCount), 9, ink.Alpha(.75))

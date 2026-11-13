@@ -1,4 +1,4 @@
-// Package trash is FanFree's own trash: a journal of marks. Putting something in the trash only
+// Package trash is Tossy's own trash: a journal of marks. Putting something in the trash only
 // records it — the file stays where it is and the OS trash is never touched — so restoring is
 // just dropping the mark, and "empty" deletes exactly the marked paths, in place, for good.
 //
@@ -92,7 +92,7 @@ func open(stateDir string, m mover) (*Bin, error) {
 		var list []*Item
 		if json.Unmarshal(data, &list) == nil {
 			for _, it := range list {
-				// drop entries the user emptied/restored outside FanFree
+				// drop entries the user emptied/restored outside Tossy
 				if _, e := os.Lstat(it.Stored); e == nil {
 					b.items[it.ID] = it
 				}
@@ -113,7 +113,7 @@ func newID() string {
 // marked reports whether the item is a mark in place rather than a legacy OS-trash move.
 func (it *Item) marked() bool { return it.Stored == it.Orig }
 
-// Move puts path in FanFree's trash. It only records a mark: the file is not moved anywhere,
+// Move puts path in Tossy's trash. It only records a mark: the file is not moved anywhere,
 // and nothing goes to the system trash. Bytes are freed only by Empty.
 func (b *Bin) Move(path string, meta Meta) (*Item, error) {
 	abs, err := filepath.Abs(path)
@@ -175,7 +175,7 @@ func (b *Bin) Restore(id string) (*Item, error) {
 	return it, b.saveLocked()
 }
 
-// Empty permanently deletes the given items (all FanFree items if ids is nil). Returns bytes freed.
+// Empty permanently deletes the given items (all Tossy items if ids is nil). Returns bytes freed.
 // The lock is not held while files are deleted, which can take long: List and Size stay
 // responsive, and an item restored meanwhile is skipped.
 func (b *Bin) Empty(ids []string) (freed int64, err error) {
@@ -235,7 +235,7 @@ func (b *Bin) List() []Item {
 	return out
 }
 
-// Size of everything FanFree has in the trash.
+// Size of everything Tossy has in the trash.
 func (b *Bin) Size() (n int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

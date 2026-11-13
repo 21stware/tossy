@@ -10,7 +10,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/trash"
+	"github.com/21stware/tossy/engine/trash"
 )
 
 // The trash bin grows with what is in it: a desk basket, a waste basket, a pedal bin, a wheelie

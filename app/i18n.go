@@ -127,9 +127,9 @@ func envLocales() []string {
 
 var sysLang = -1 // systemLang, asked once
 
-// resolveLang turns the setting ("" follows the system) into a language. FANFREE_LANG overrides.
+// resolveLang turns the setting ("" follows the system) into a language. TOSSY_LANG overrides.
 func resolveLang(code string) language {
-	if v := os.Getenv("FANFREE_LANG"); v != "" {
+	if v := os.Getenv("TOSSY_LANG"); v != "" {
 		code = v
 	}
 	for _, l := range languages {

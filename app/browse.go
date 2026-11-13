@@ -14,10 +14,10 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/gitrepo"
-	"github.com/fanfree/fanfree/engine/habit"
-	"github.com/fanfree/fanfree/engine/safety"
-	"github.com/fanfree/fanfree/engine/scan"
+	"github.com/21stware/tossy/engine/gitrepo"
+	"github.com/21stware/tossy/engine/habit"
+	"github.com/21stware/tossy/engine/safety"
+	"github.com/21stware/tossy/engine/scan"
 )
 
 // The browse scene: one panel that shows the folder in focus as a list, or, with a file
@@ -266,7 +266,7 @@ var levelBullets = [4][]string{
 	{"内容可自动重建或重新下载", "不包含个人创作数据", "移至%s后可随时还原"},
 	{"可能包含应用配置或本地状态", "删除前请确认是否仍在使用"},
 	{"可能包含无法恢复的个人文件", "请确认已有备份再删除"},
-	{"操作系统或系统服务依赖", "FanFree 禁止删除此项"},
+	{"操作系统或系统服务依赖", "Tossy 禁止删除此项"},
 }
 
 func (a *app) habitOf(n int32) *habit.Match {

@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fanfree/fanfree/engine/scan"
+	"github.com/21stware/tossy/engine/scan"
 )
 
-// Putting something in the trash is a mark in FanFree only: the file stays on disk, a rescan
+// Putting something in the trash is a mark in Tossy only: the file stays on disk, a rescan
 // keeps it hidden, restoring brings it back, and emptying deletes it in place.
 func TestTrashIsAMark(t *testing.T) {
 	a := loaded(t)

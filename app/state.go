@@ -13,10 +13,11 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/habit"
-	"github.com/fanfree/fanfree/engine/safety"
-	"github.com/fanfree/fanfree/engine/scan"
-	"github.com/fanfree/fanfree/engine/trash"
+	"github.com/21stware/tossy/engine/habit"
+	"github.com/21stware/tossy/engine/safety"
+	"github.com/21stware/tossy/engine/scan"
+	"github.com/21stware/tossy/engine/statedir"
+	"github.com/21stware/tossy/engine/trash"
 )
 
 const (
@@ -192,10 +193,10 @@ func newApp() *app {
 		fmt.Fprintln(os.Stderr, "trash journal:", err)
 	}
 	if a.habit, err = habit.Load(filepath.Join(state, "habits.json")); err != nil {
-		a.habit, _ = habit.Load(filepath.Join(os.TempDir(), "fanfree-habits.json"))
+		a.habit, _ = habit.Load(filepath.Join(os.TempDir(), "tossy-habits.json"))
 	}
 	a.loadSettings()
-	if t := os.Getenv("FANFREE_THEME"); t != "" {
+	if t := os.Getenv("TOSSY_THEME"); t != "" {
 		if i, _ := paletteByName(t); i >= 0 {
 			a.palIdx = i
 		}
@@ -204,16 +205,7 @@ func newApp() *app {
 	return a
 }
 
-func stateDir() string {
-	if d := os.Getenv("FANFREE_STATE"); d != "" {
-		return d
-	}
-	d, err := os.UserConfigDir()
-	if err != nil {
-		d = os.TempDir()
-	}
-	return filepath.Join(d, "FanFree")
-}
+func stateDir() string { return statedir.Dir() }
 
 // startScan scans root in the background. done runs on the main thread (via win.Update, or
 // directly when there is no window, as in tests).
@@ -423,7 +415,7 @@ func (a *app) canTrash(i int32) (bool, string) {
 	return true, ""
 }
 
-// hideMarked takes what is in FanFree's trash out of a fresh scan: a trashed item is only a mark
+// hideMarked takes what is in Tossy's trash out of a fresh scan: a trashed item is only a mark
 // and its file is still on disk, so the scanner found it again. Deepest first, so a mark inside a
 // marked folder is still reachable when its turn comes; restoring one reattaches it.
 func (a *app) hideMarked(t *scan.Tree) {
@@ -445,7 +437,7 @@ func (a *app) hideMarked(t *scan.Tree) {
 }
 
 // trashNodes removes nodes from the tree at once (the chart and list update in this frame),
-// then marks them in FanFree's trash in the background (files stay put; nothing goes to the
+// then marks them in Tossy's trash in the background (files stay put; nothing goes to the
 // system trash). A failed mark puts the node back.
 func (a *app) trashNodes(items []cleanItem, many bool) *batch {
 	b := &batch{}

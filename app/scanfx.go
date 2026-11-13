@@ -8,7 +8,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/scan"
+	"github.com/21stware/tossy/engine/scan"
 )
 
 // The scan readout: each new path rolls up from below as a whole, pushing the last one up and

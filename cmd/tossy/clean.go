@@ -10,25 +10,17 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fanfree/fanfree/engine/habit"
-	"github.com/fanfree/fanfree/engine/safety"
-	"github.com/fanfree/fanfree/engine/scan"
-	"github.com/fanfree/fanfree/engine/trash"
+	"github.com/21stware/tossy/engine/habit"
+	"github.com/21stware/tossy/engine/safety"
+	"github.com/21stware/tossy/engine/scan"
+	"github.com/21stware/tossy/engine/statedir"
+	"github.com/21stware/tossy/engine/trash"
 )
 
-func stateDir() string {
-	if d := os.Getenv("FANFREE_STATE"); d != "" {
-		return d
-	}
-	d, err := os.UserConfigDir()
-	if err != nil {
-		d = os.TempDir()
-	}
-	return filepath.Join(d, "FanFree")
-}
+func stateDir() string { return statedir.Dir() }
 
 func die(err error) {
-	fmt.Fprintln(os.Stderr, "fanfree:", err)
+	fmt.Fprintln(os.Stderr, "tossy:", err)
 	os.Exit(1)
 }
 
@@ -93,7 +85,7 @@ func cmdClean(args []string) {
 		}
 	}
 	if !*yes {
-		fmt.Println("\ndry run — add -yes to move these to the trash (restorable with `fanfree trash restore`)")
+		fmt.Println("\ndry run — add -yes to move these to the trash (restorable with `tossy trash restore`)")
 		return
 	}
 	var moved, freed int64
@@ -166,7 +158,7 @@ func cmdTrash(args []string) {
 			}
 			fmt.Printf("%s  %10s  %s  %-6s %-16s %s\n", it.ID, size(it.Size), it.When.Format("01-02 15:04"), it.Source, why, it.Orig)
 		}
-		fmt.Printf("\n%s in the trash from FanFree\n", size(bin.Size()))
+		fmt.Printf("\n%s in the trash from Tossy\n", size(bin.Size()))
 	case "restore":
 		for _, id := range args {
 			it, err := bin.Restore(id)

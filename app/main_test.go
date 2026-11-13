@@ -11,7 +11,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/scan"
+	"github.com/21stware/tossy/engine/scan"
 )
 
 // fixture builds a small home-like tree with real (allocated) bytes.
@@ -58,7 +58,7 @@ func fixture(t testing.TB) string {
 }
 
 func loaded(t testing.TB) *app {
-	t.Setenv("FANFREE_STATE", t.TempDir())
+	t.Setenv("TOSSY_STATE", t.TempDir())
 	a := newApp()
 	done := make(chan struct{})
 	a.startScan(fixture(t))
@@ -80,7 +80,7 @@ func loaded(t testing.TB) *app {
 }
 
 func shot(t *testing.T, tt *ui.Tester, name string) {
-	dir := os.Getenv("FANFREE_SHOTS")
+	dir := os.Getenv("TOSSY_SHOTS")
 	if dir == "" {
 		return
 	}
@@ -458,13 +458,13 @@ func (a *app) arcPointOf(h *arc) (float32, float32) {
 	return x, y
 }
 
-// TestBigTree renders a large real tree (FANFREE_BIG=path) and reports frame times.
+// TestBigTree renders a large real tree (TOSSY_BIG=path) and reports frame times.
 func TestBigTree(t *testing.T) {
-	root := os.Getenv("FANFREE_BIG")
+	root := os.Getenv("TOSSY_BIG")
 	if root == "" {
-		t.Skip("set FANFREE_BIG")
+		t.Skip("set TOSSY_BIG")
 	}
-	t.Setenv("FANFREE_STATE", t.TempDir())
+	t.Setenv("TOSSY_STATE", t.TempDir())
 	a := newApp()
 	t0 := time.Now()
 	a.startScan(root)
@@ -491,10 +491,10 @@ func TestBigTree(t *testing.T) {
 	shot(t, tt, "9-big")
 }
 
-// TestIcon regenerates resources/icon.png (FANFREE_ICON=1): a HUD sunburst on a rounded plate.
+// TestIcon regenerates resources/icon.png (TOSSY_ICON=1): a HUD sunburst on a rounded plate.
 func TestIcon(t *testing.T) {
-	if os.Getenv("FANFREE_ICON") == "" {
-		t.Skip("set FANFREE_ICON")
+	if os.Getenv("TOSSY_ICON") == "" {
+		t.Skip("set TOSSY_ICON")
 	}
 	pal := palettes[0]
 	img := ui.Render(func(c *ui.Context) {

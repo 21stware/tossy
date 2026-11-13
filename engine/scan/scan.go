@@ -292,4 +292,4 @@ func (s *scanner) visit(j job, ents *[]rawEntry, sub []job) []job {
 	return sub
 }
 
-var debugSlow = os.Getenv("FANFREE_DEBUG") != ""
+var debugSlow = os.Getenv("TOSSY_DEBUG") != ""

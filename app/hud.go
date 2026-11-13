@@ -6,7 +6,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/scan"
+	"github.com/21stware/tossy/engine/scan"
 )
 
 // paintHUD draws the instrument layer over the chart: bezel, counter-rotating dashed rings,

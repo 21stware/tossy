@@ -13,7 +13,7 @@ import (
 )
 
 // Recycle Bin via SHFileOperationW(FO_DELETE, FOF_ALLOWUNDO). Afterwards the matching
-// $Recycle.Bin\<SID>\$I… record is located so the item can be restored or purged from FanFree.
+// $Recycle.Bin\<SID>\$I… record is located so the item can be restored or purged from Tossy.
 
 type osMover struct{}
 
@@ -70,7 +70,7 @@ func (osMover) trash(p string) (string, string, error) {
 	}
 	sid, err := userSID()
 	if err != nil {
-		return "", "", nil // recycled, but FanFree cannot locate it for restore
+		return "", "", nil // recycled, but Tossy cannot locate it for restore
 	}
 	bin := filepath.Join(filepath.VolumeName(p)+`\`, "$Recycle.Bin", sid)
 	ents, _ := os.ReadDir(bin)

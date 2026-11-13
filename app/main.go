@@ -1,4 +1,4 @@
-// FanFree is a disk cleanup analyser: a drillable sunburst of what fills the disk, a list with
+// Tossy is a disk cleanup analyser: a drillable sunburst of what fills the disk, a list with
 // safety verdicts, and an automatic clean that moves only what is safe to the trash.
 package main
 
@@ -14,8 +14,8 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/safety"
-	"github.com/fanfree/fanfree/engine/scan"
+	"github.com/21stware/tossy/engine/safety"
+	"github.com/21stware/tossy/engine/scan"
 )
 
 func main() {
@@ -29,7 +29,7 @@ func main() {
 	}
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
-			Title: "FanFree", Width: 1280, Height: 820, MinWidth: 720, MinHeight: 620,
+			Title: "Tossy", Width: 1280, Height: 820, MinWidth: 720, MinHeight: 620,
 			StateKey: "main", Content: ui.View(a.view),
 			TitleBarStyle: mygo.TitleBarHiddenInset,
 		})

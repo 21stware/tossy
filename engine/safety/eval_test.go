@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fanfree/fanfree/engine/scan"
+	"github.com/21stware/tossy/engine/scan"
 )
 
 func mk(t *testing.T, root, rel string, n int, age time.Duration) {

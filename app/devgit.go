@@ -9,10 +9,10 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/gitrepo"
-	"github.com/fanfree/fanfree/engine/safety"
-	"github.com/fanfree/fanfree/engine/scan"
-	"github.com/fanfree/fanfree/engine/trash"
+	"github.com/21stware/tossy/engine/gitrepo"
+	"github.com/21stware/tossy/engine/safety"
+	"github.com/21stware/tossy/engine/scan"
+	"github.com/21stware/tossy/engine/trash"
 )
 
 // Developer folders: a Git checkout says what deleting it would lose, a repository lists its
@@ -436,8 +436,8 @@ func (a *app) gitAskBody(c *ui.Context, q *askState) bool {
 // ------------------------------------------------------------------------------------------
 // emptying the trash: a last look at the checkouts in it
 
-// markNote says what putting something in FanFree's trash really does.
-const markNote = "文件会留在原处，只在 FanFree 的%[1]s里做个标记；清空前随时可以还原，清空时直接永久删除，不经过系统%[1]s。"
+// markNote says what putting something in Tossy's trash really does.
+const markNote = "文件会留在原处，只在 Tossy 的%[1]s里做个标记；清空前随时可以还原，清空时直接永久删除，不经过系统%[1]s。"
 
 // emptyCheck is what git says, at the moment of emptying, about the checkouts in the trash.
 // Marks can sit for days while work goes on in a marked folder, so the state seen when it was

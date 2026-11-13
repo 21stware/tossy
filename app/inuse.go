@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fanfree/fanfree/engine/scan"
+	"github.com/21stware/tossy/engine/scan"
 )
 
 // In-use detection keeps a clean from pulling caches out from under a running program. Two

@@ -1,6 +1,6 @@
 {
-  "name": "FanFree",
-  "identifier": "app.fanfree.FanFree",
+  "name": "Tossy",
+  "identifier": "app.tossy.Tossy",
   "version": "0.1.0",
   "out": "build"
 }

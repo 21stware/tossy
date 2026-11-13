@@ -15,7 +15,7 @@ const (
 	Safe      Level = iota // rebuildable or re-downloadable
 	Review                 // probably fine, the user should confirm
 	Risky                  // personal data
-	Protected              // OS needs it; never removed by FanFree
+	Protected              // OS needs it; never removed by Tossy
 )
 
 func (l Level) String() string { return [...]string{"safe", "review", "risky", "protected"}[l] }

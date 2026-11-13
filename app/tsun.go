@@ -9,7 +9,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/trash"
+	"github.com/21stware/tossy/engine/trash"
 )
 
 // The trash scene's chart: where the bin's contents came from. Items are re-rooted into a

@@ -4,8 +4,8 @@ import (
 	"context"
 	"os"
 
-	"github.com/fanfree/fanfree/engine/safety"
-	"github.com/fanfree/fanfree/engine/scan"
+	"github.com/21stware/tossy/engine/safety"
+	"github.com/21stware/tossy/engine/scan"
 	"path/filepath"
 	"testing"
 )

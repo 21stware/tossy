@@ -7,19 +7,19 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/safety"
-	"github.com/fanfree/fanfree/engine/trash"
+	"github.com/21stware/tossy/engine/safety"
+	"github.com/21stware/tossy/engine/trash"
 )
 
 // What the right panel shows.
 const (
 	sceneBrowse = iota
 	sceneEval   // the clean plan, item by item
-	sceneTrash  // what FanFree moved to the trash
+	sceneTrash  // what Tossy moved to the trash
 )
 
 // ------------------------------------------------------------------------------------------
-// trash panel: what FanFree moved, grouped by why
+// trash panel: what Tossy moved, grouped by why
 
 var srcNames = map[trash.Source]string{trash.ByRule: "按清理规则", trash.ByManual: "你手动删除", trash.ByHabit: "依据你的历史操作"}
 var srcOrder = []trash.Source{trash.ByHabit, trash.ByManual, trash.ByRule}

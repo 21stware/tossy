@@ -1,4 +1,4 @@
-// Command fanfree is the engine's command-line front end: scan, evaluate, clean.
+// Command tossy is the engine's command-line front end: scan, evaluate, clean.
 package main
 
 import (
@@ -11,18 +11,18 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fanfree/fanfree/engine/safety"
-	"github.com/fanfree/fanfree/engine/scan"
+	"github.com/21stware/tossy/engine/safety"
+	"github.com/21stware/tossy/engine/scan"
 )
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  fanfree scan [-w workers] [-x] [-top n] [path]   scan and print the largest entries
-  fanfree eval [-review] [-top n] [path]           scan, then list what is safe to clean (read-only)
-  fanfree clean [-review] [-yes] [path]            move safe items (+ learned habits) to the trash; dry run without -yes
-  fanfree rm path...                               move to the trash by hand (FanFree learns from this)
-  fanfree trash [list | restore id... | empty [id...]]
-  fanfree habit [list | forget key]`)
+  tossy scan [-w workers] [-x] [-top n] [path]   scan and print the largest entries
+  tossy eval [-review] [-top n] [path]           scan, then list what is safe to clean (read-only)
+  tossy clean [-review] [-yes] [path]            move safe items (+ learned habits) to the trash; dry run without -yes
+  tossy rm path...                               move to the trash by hand (Tossy learns from this)
+  tossy trash [list | restore id... | empty [id...]]
+  tossy habit [list | forget key]`)
 	os.Exit(2)
 }
 

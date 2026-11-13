@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FanFree — 磁盘空间分析与清理</title>
+<title>Tossy — 磁盘空间分析与清理</title>
 <style>
 :root{
   --bg:#131315;--bg2:#1a1a1d;--bg3:#222226;--hov:#ffffff09;--sel:#ffffff10;--line:#ffffff0f;
@@ -627,7 +627,7 @@ function project(name, kind) {
 }
 function repoDir(scale) {
   const js = ['web-console','design-system','ml-dashboard','landing','admin-portal'];
-  const ps = [project('fanfree','go'), project('rust-engine','rust'), project('mobile-app','swift'), project('cli-tools','go')];
+  const ps = [project('tossy','go'), project('rust-engine','rust'), project('mobile-app','swift'), project('cli-tools','go')];
   for (let s = 0; s < scale; s++) for (const j of js) ps.push(project(s ? `${j}-${s}` : j, 'js'));
   return D('repo', ps);
 }
@@ -648,14 +648,14 @@ function buildMac(scale) {
       D('Caches', cacheApps.map(a => D(a, spread(ri(80, 2600) * MB * (big[a] || 1), ri(30, 400), () => hex(12))))),
       D('Developer',
         D('Xcode',
-          D('DerivedData', ['FanFree','Runner','Pods','MyGoApp','Widgets','Playground'].map(p => D(`${p}-${hex(28)}`,
+          D('DerivedData', ['Tossy','Runner','Pods','MyGoApp','Widgets','Playground'].map(p => D(`${p}-${hex(28)}`,
             D('Build', D('Intermediates.noindex', spread(ri(1, 5) * GB, ri(100, 500), nm(['o','d','dia','swiftmodule']))),
                        D('Products', spread(ri(200, 1500) * MB, ri(5, 30), nm(['app','dSYM','framework'])))),
             D('Index.noindex', spread(ri(300, 1500) * MB, ri(50, 200), () => `${hex(8)}.unit`)),
             D('Logs', spread(ri(10, 200) * MB, ri(5, 40), () => `${hex(8)}.xcactivitylog`))))),
           D('iOS DeviceSupport', ['17.5.1 (21F90)','17.6 (21G80)','18.0 (22A3354)','18.1 (22B83)','18.2 (22C152)'].map(v =>
             D(`iPhone15,2 ${v}`, D('Symbols', spread(ri(2, 5) * GB, ri(30, 120), nm(['dylib','dyld'])))))),
-          D('Archives', spread(ri(2, 6) * GB, ri(5, 15), i => `FanFree ${i + 1}.xcarchive`))),
+          D('Archives', spread(ri(2, 6) * GB, ri(5, 15), i => `Tossy ${i + 1}.xcarchive`))),
         D('CoreSimulator', D('Devices', Array.from({length: 8}, () => D(uuid(), D('data', spread(ri(500, 4500) * MB, ri(40, 200), nm(['db','plist','sqlite','png'])))))),
           D('Caches', spread(ri(1, 4) * GB, ri(20, 80), () => hex(10))))),
       D('Application Support', ['Slack','Code','Google','Steam','Figma','Spotify','discord','Claude'].map(a => D(a, spread(ri(100, 6000) * MB, ri(20, 200), nm(['db','json','ldb','log','bin']))))),
@@ -785,7 +785,7 @@ const BULLETS = {
   safe: ['内容可自动重建或重新下载', '不包含个人创作数据', '移至废纸篓后可随时还原'],
   review: ['可能包含应用配置或本地状态', '删除前请确认是否仍在使用'],
   risky: ['可能包含无法恢复的个人文件', '请确认已有备份再删除'],
-  protected: ['操作系统或系统服务依赖', 'FanFree 禁止删除此项'],
+  protected: ['操作系统或系统服务依赖', 'Tossy 禁止删除此项'],
 };
 const RULES = new Map();
 function rule(names, level, reason, opt = {}) {
@@ -986,7 +986,7 @@ new ResizeObserver(resize).observe($('#chartwrap'));
 // themes: 'hud' (dark holographic), 'mech' (light armour plates, tricolour markings), 'classic'.
 // HUD = overlay instruments on (hud + mech); MECH = light plate rendering.
 const THEMES = ['hud', 'mech', 'classic'];
-let THEME = (() => { try { const t = localStorage.getItem('fanfree.theme'); return THEMES.includes(t) ? t : 'hud'; } catch (e) { return 'hud'; } })();
+let THEME = (() => { try { const t = localStorage.getItem('tossy.theme'); return THEMES.includes(t) ? t : 'hud'; } catch (e) { return 'hud'; } })();
 let HUD = THEME !== 'classic', MECH = THEME === 'mech';
 const TPAL = {
   classic: {fg: '#ececef', dim: '#74747d', ink: 'rgba(255,255,255,', agg: 'rgba(255,255,255,.045)'},
@@ -998,7 +998,7 @@ function setTheme(t) {
   if (!THEMES.includes(t)) t = 'hud';
   THEME = t; HUD = t !== 'classic'; MECH = t === 'mech'; TP = TPAL[t];
   document.body.classList.toggle('hud', t === 'hud'); document.body.classList.toggle('mech', MECH);
-  try { localStorage.setItem('fanfree.theme', t); } catch (e) {}
+  try { localStorage.setItem('tossy.theme', t); } catch (e) {}
   document.querySelectorAll('#theme button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   resize(); if (root) renderRows();
   if (!HUD) { hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.clearRect(0, 0, hcv.width, hcv.height); }
@@ -1879,7 +1879,7 @@ function preview(n) {
   } else if (cat === 'archive') {
     lines = [`${n.name}  ·  ${fmt(n.size)}`, '─'.repeat(38), ...Array.from({length: 6}, () => `${pickR(rr, ['Contents/', 'payload/', 'bin/', 'lib/', 'share/'])}${pickR(rr, WORDS)}.${pickR(rr, ['dylib', 'bin', 'json', 'png', 'plist'])}`.padEnd(34) + fmt(rr() * 80 * MB).padStart(9)), '… 共 ' + num(((rr() * 4000) | 0) + 200) + ' 个条目'];
   } else if (cat === 'doc' && (e === 'md' || e === 'txt' || e === 'csv')) {
-    lines = e === 'csv' ? ['id,name,size,updated_at', ...Array.from({length: 7}, (_, i) => `${i + 1},${pickR(rr, WORDS)},${(rr() * 1e6) | 0},2026-0${1 + i}-1${i}`)] : ['# ' + n.name.replace(/\.\w+$/, ''), '', 'FanFree 是一个跨平台磁盘分析与清理工具。', '', '## 特性', '- 高性能并行扫描', '- 旭日图交互式浏览', '- 安全评估规则引擎'];
+    lines = e === 'csv' ? ['id,name,size,updated_at', ...Array.from({length: 7}, (_, i) => `${i + 1},${pickR(rr, WORDS)},${(rr() * 1e6) | 0},2026-0${1 + i}-1${i}`)] : ['# ' + n.name.replace(/\.\w+$/, ''), '', 'Tossy 是一个跨平台磁盘分析与清理工具。', '', '## 特性', '- 高性能并行扫描', '- 旭日图交互式浏览', '- 安全评估规则引擎'];
   } else if (cat === 'doc') {
     return `<div class="pv"><div class="img" style="height:150px;background:#f4f1ea;display:flex;flex-direction:column;gap:7px;padding:18px 26px">${Array.from({length: 8}, (_, i) => `<div style="height:${i ? 6 : 10}px;width:${i ? 50 + rr() * 50 : 45}%;background:#${i ? 'c9c4b8' : '6b6457'};border-radius:2px"></div>`).join('')}<span style="color:#fff">${e.toUpperCase()} · ${((n.size / 60 / KB) | 0) + 1} 页</span></div></div>`;
   } else {
@@ -1938,9 +1938,9 @@ const TIERS = [
 /* bin drawing styles · 写实 (glass + metal) · 线稿 (single-weight line art) · 彩塑 (coloured plastic — each size has its own colour, like real bins) */
 const BSTYLES = [['real', '写实'], ['line', '线稿'], ['clay', '彩塑']];
 const CLAY = [['#d2ad83', '#9c7a56', '#3a2f24'], ['#c47f63', '#8d5440', '#35241e'], ['#a3a8b0', '#6c7078', '#24262a'], ['#5c9a79', '#3b6b52', '#1c2a22'], ['#4f72a3', '#304b72', '#171d29']];
-let binStyle = (() => { try { return localStorage.getItem('fanfree.binStyle') || 'real'; } catch (e) { return 'real'; } })();
+let binStyle = (() => { try { return localStorage.getItem('tossy.binStyle') || 'real'; } catch (e) { return 'real'; } })();
 function setBinStyle(k) {
-  binStyle = k; try { localStorage.setItem('fanfree.binStyle', k); } catch (e) {}
+  binStyle = k; try { localStorage.setItem('tossy.binStyle', k); } catch (e) {}
   for (const [s] of BSTYLES) binEl.classList.toggle('s-' + s, s === k);
   document.querySelectorAll('#bStyle button').forEach(b => b.classList.toggle('on', b.dataset.b === k));
   if (!document.body.classList.contains('static')) binEl.querySelector('.bw').animate([{transform: 'scale(.94,1.04)', opacity: .4}, {transform: 'none', opacity: 1}], {duration: 260, easing: 'cubic-bezier(.3,1.4,.5,1)'});
@@ -2340,7 +2340,7 @@ function emptyTrash(fromToast) {
           candidates must be ≤ 4× the largest item you deleted; each restore of a learned pick counts −2.
    ========================================================================= */
 let hist = {};
-const HIST_KEY = () => 'fanfree.habits.' + platKey;
+const HIST_KEY = () => 'tossy.habits.' + platKey;
 const SEED_HIST = {
   mac: {'/users/me/downloads|.dmg': {d: 3, r: 0, max: 900 * MB, label: 'Downloads 中的 .dmg 文件', seed: 1},
         '/users/me/library/developer/coresimulator/devices|dir': {d: 2, r: 0, max: 4.5 * GB, label: 'CoreSimulator/Devices 中的文件夹', seed: 1}},

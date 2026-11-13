@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fanfree/fanfree/engine/trash"
+	"github.com/21stware/tossy/engine/trash"
 )
 
 // Emptying looks again at the checkouts in the trash: work done after the mark is not lost silently.

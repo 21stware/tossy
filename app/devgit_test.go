@@ -16,7 +16,7 @@ func TestGitWorktrees(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
-	t.Setenv("FANFREE_STATE", t.TempDir())
+	t.Setenv("TOSSY_STATE", t.TempDir())
 	root := t.TempDir()
 	repo := filepath.Join(root, "app")
 	g := func(dir string, args ...string) {

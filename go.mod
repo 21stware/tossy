@@ -1,4 +1,4 @@
-module github.com/fanfree/fanfree
+module github.com/21stware/tossy
 
 go 1.27.3
 

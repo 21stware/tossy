@@ -7,7 +7,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/safety"
+	"github.com/21stware/tossy/engine/safety"
 )
 
 // Emptying the trash: the bin itself asks, in a comic speech bubble rising from its lid; on a

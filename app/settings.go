@@ -61,7 +61,7 @@ func (a *app) syncSettings() {
 		return
 	}
 	a.saved = a.set
-	if os.Getenv("FANFREE_STATE") == "" && underTest() {
+	if os.Getenv("TOSSY_STATE") == "" && underTest() {
 		return
 	}
 	os.MkdirAll(stateDir(), 0o755)
@@ -315,7 +315,7 @@ func (a *app) settingsNav(c *ui.Context, k setColors) {
 			if v == "" {
 				v = "dev"
 			}
-			ui.Text(c, "FanFree "+v).FontSize(12).TextColor(pal.t3).SingleLine()
+			ui.Text(c, "Tossy "+v).FontSize(12).TextColor(pal.t3).SingleLine()
 		})
 	})
 }
@@ -716,7 +716,7 @@ func (a *app) setHabits(c *ui.Context) {
 }
 
 func (a *app) setTrash(c *ui.Context) {
-	a.option(c, "how", T("工作方式"), T("放入废纸篓只是 FanFree 里的标记：文件原地不动，也不会进系统废纸篓。恢复即取消标记；清空时才在原位置永久删除被标记的项目。"), func() {})
+	a.option(c, "how", T("工作方式"), T("放入废纸篓只是 Tossy 里的标记：文件原地不动，也不会进系统废纸篓。恢复即取消标记；清空时才在原位置永久删除被标记的项目。"), func() {})
 	a.cell(c, "dir", func() {
 		ui.Row(c).Gap(24).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Gap(4).Grow(1).Shrink(1).MinWidth(0).Children(func() {

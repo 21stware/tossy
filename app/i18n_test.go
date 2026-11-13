@@ -16,7 +16,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/fanfree/fanfree/engine/safety"
+	"github.com/21stware/tossy/engine/safety"
 )
 
 func useLang(t *testing.T, l language) {
