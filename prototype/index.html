@@ -1,0 +1,2676 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FanFree — 磁盘空间分析与清理</title>
+<style>
+:root{
+  --bg:#131315;--bg2:#1a1a1d;--bg3:#222226;--hov:#ffffff09;--sel:#ffffff10;--line:#ffffff0f;
+  --text:#ececef;--t2:#a3a3ab;--t3:#74747d;--t4:#4e4e56;
+  --safe:#6fc39a;--review:#d4a656;--risky:#de7f86;--prot:#7f838e;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+  font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Inter,Roboto,sans-serif;
+  overflow:hidden;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+#app{display:grid;grid-template-rows:minmax(0,1fr) 30px;height:100%}
+.num{font-variant-numeric:tabular-nums}
+
+.logo{display:flex;align-items:center;flex:none;color:var(--text);margin-right:4px}
+.logo svg{width:18px;height:18px}
+/* disk summary (top of right panel) */
+.disk{padding:16px 18px 14px;border-bottom:1px solid var(--line)}
+.disk .dt{display:flex;align-items:center;gap:8px;margin:-4px -8px 6px 0}
+.disk #dVol{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.diskbar{height:4px;background:var(--bg3);border-radius:2px;overflow:hidden;display:flex}
+.diskbar>div{height:100%;transition:width .8s cubic-bezier(.2,.8,.2,1)}
+.diskbar .u{background:var(--t2)}
+.diskbar .t{background:var(--review)}
+.disktxt{font-size:12px;color:var(--t3);margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.disktxt b{color:var(--t2);font-weight:500}
+.sp{flex:1}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;border:0;background:none;padding:0 11px;border-radius:7px;cursor:pointer;white-space:nowrap;font-size:13px;color:var(--t2);transition:background .12s,color .12s}
+.btn:hover{background:var(--hov);color:var(--text)}
+.btn.icon{width:30px;padding:0}
+.btn.sm{height:26px;padding:0 9px;font-size:12px}
+.btn.solid{background:var(--bg3);color:var(--text)}
+.btn.solid:hover{background:#2b2b30}
+.btn.primary{background:var(--text);color:var(--bg);font-weight:600}
+.btn.primary:hover{background:#fff;color:var(--bg)}
+.btn.danger{background:var(--risky);color:#1b0f10;font-weight:600}
+.btn.danger:hover{background:#e8949a;color:#1b0f10}
+.btn:disabled{opacity:.35;cursor:not-allowed;background:none}
+.btn.primary:disabled{background:var(--bg3);color:var(--t3);opacity:1}
+.btn svg{width:15px;height:15px;flex:none}
+.tabs{display:flex;gap:2px}
+.tabs button{border:0;background:none;color:var(--t3);padding:3px 8px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap}
+.tabs button:hover{color:var(--t2)}
+.tabs button.on{color:var(--text);background:var(--hov)}
+
+/* ---------- main ---------- */
+main{display:grid;grid-template-columns:minmax(0,1fr) clamp(250px,33%,400px);min-height:0;min-width:0}
+#left{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0}
+.ltop{display:flex;align-items:center;gap:10px;padding:14px 16px 0 18px;min-width:0}
+.crumbs{overflow:hidden}
+.crumbs{display:flex;align-items:center;flex-wrap:wrap;min-width:0;flex:1;font-size:13px}
+.crumbs span{padding:3px 6px;border-radius:5px;cursor:pointer;color:var(--t3);white-space:nowrap}
+.crumbs span:hover{color:var(--text)}
+.crumbs span.cur{color:var(--text);cursor:default}
+.crumbs i{color:var(--t4);font-style:normal;padding:0 1px}
+#chartwrap{flex:1;position:relative;min-height:0}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+.legend{position:absolute;left:20px;top:10px;display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--t3);pointer-events:none}
+.legend div{display:flex;align-items:center;gap:8px}
+.legend i{width:6px;height:6px;border-radius:50%;flex:none}
+.legend b{color:var(--t2);font-weight:400;margin-left:6px;font-variant-numeric:tabular-nums}
+.lbot{display:flex;align-items:center;gap:10px;padding:0 16px 16px 20px;min-width:0}
+.lbot .cs{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--t3)}
+.lbot .cs b{color:var(--text);font-weight:600;font-size:15px;font-variant-numeric:tabular-nums;margin-right:4px}
+.lbot .cs i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--safe);margin-right:8px;transform:translateY(-1px)}
+#scan{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:6px;z-index:5;background:var(--bg)}
+#scan.on{display:flex}
+#scan .num{font-size:22px;font-weight:500;font-variant-numeric:tabular-nums}
+#scan .path{font:11px var(--mono);color:var(--t4);max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- right ---------- */
+#right{display:flex;flex-direction:column;min-height:0}
+.lhead{display:flex;align-items:flex-end;gap:10px;padding:14px 18px 8px;min-width:0}
+.lhead .t{font-weight:600;font-size:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lhead .c{color:var(--t3);font-size:12px;white-space:nowrap;margin-top:1px}
+#list{flex:0 1 auto;overflow:auto;position:relative;min-height:120px}
+#spacer{position:relative}
+.row{position:absolute;left:8px;right:8px;height:32px;display:flex;align-items:center;gap:10px;padding:0 6px 0 10px;border-radius:6px;cursor:default}
+.row:hover,.row.hov{background:var(--hov)}
+.row.sel{background:var(--sel)}
+.sw{width:8px;height:8px;border-radius:2px;flex:none}
+.row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .nm.dir{color:var(--text)}
+.row .nm.file{color:var(--t2)}
+.row .fl{font-size:11.5px;flex:none}
+.row .fl.safe{color:var(--safe)}
+.row .fl svg{width:12px;height:12px;color:var(--t4);display:block}
+.row .sz{width:64px;text-align:right;font-variant-numeric:tabular-nums;color:var(--t2);flex:none}
+.del{width:26px;height:26px;border-radius:6px;border:0;background:none;color:var(--t4);cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none;transition:color .12s,background .12s}
+.row:hover .del,.row.sel .del{color:var(--t2)}
+.del:hover{background:#de7f8622;color:var(--risky)!important}
+.row{touch-action:none;user-select:none;transition:opacity .15s}
+.row.drag{opacity:.35}
+.row.in{animation:rowIn .22s cubic-bezier(.2,.8,.2,1) both;animation-delay:var(--d)}
+@keyframes rowIn{from{opacity:0;transform:translateX(var(--dx))}}
+.fadeIn{animation:fadeIn .22s ease-out}
+@keyframes fadeIn{from{opacity:0;transform:translateY(3px)}}
+.del.lock{cursor:not-allowed;color:var(--t4)}
+.del svg{width:14px;height:14px}
+.empty{padding:40px;text-align:center;color:var(--t4)}
+
+#detail{flex:none;max-height:52%;overflow:auto;padding:18px 18px 16px;border-top:1px solid var(--line)}
+.dname{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dpath{font:11px var(--mono);color:var(--t4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.dsize{display:flex;align-items:baseline;gap:10px;margin-top:12px}
+.dsize b{font-size:26px;font-weight:600;letter-spacing:-.5px;font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}
+.dsize span{color:var(--t3);font-size:12px}
+.vline{display:flex;gap:8px;align-items:baseline;margin-top:12px;line-height:1.5}
+.vline i{width:7px;height:7px;border-radius:50%;flex:none;transform:translateY(-1px)}
+.vline b{font-weight:500;white-space:nowrap}
+.vline span{color:var(--t2)}
+.comp{display:flex;height:4px;border-radius:2px;overflow:hidden;gap:1px;margin-top:16px}
+.comp i{display:block;height:100%}
+details{margin-top:10px}
+summary{cursor:pointer;color:var(--t3);font-size:12px;list-style:none;display:inline-flex;align-items:center;gap:4px;user-select:none}
+summary::-webkit-details-marker{display:none}
+summary:before{content:"";width:0;height:0;border-left:4px solid currentColor;border-top:3.5px solid transparent;border-bottom:3.5px solid transparent;transition:transform .15s}
+details[open]>summary:before{transform:rotate(90deg)}
+summary:hover{color:var(--t2)}
+.dl{display:grid;gap:1px;margin-top:8px;font-size:12px}
+.dl div{display:flex;align-items:center;gap:8px;padding:3px 6px;border-radius:5px;color:var(--t2);min-width:0}
+.dl div[data-t]{cursor:pointer}
+.dl div[data-t]:hover{background:var(--hov)}
+.dl span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dl b{font-weight:400;color:var(--t3);font-variant-numeric:tabular-nums}
+.dl .h{color:var(--t4);font-size:11px;padding:8px 6px 2px}
+.why{margin:8px 0 0;padding:0 0 0 15px;color:var(--t3);font-size:12px;display:grid;gap:2px}
+.pv{margin-top:8px;border-radius:8px;overflow:hidden;background:#0d0d0f}
+.pv pre{margin:0;padding:10px 12px;font:11px/1.6 var(--mono);color:var(--t3);white-space:pre;overflow:hidden;max-height:150px}
+.pv .img{height:140px;position:relative}
+.pv .img span,.pv .vid span{position:absolute;right:8px;bottom:7px;font-size:11px;color:#fff;background:#0009;padding:1px 6px;border-radius:4px}
+.pv .vid{height:140px;position:relative;background:#1c1b22;display:flex;align-items:center;justify-content:center;color:#fff9;font-size:18px}
+.pv .film{position:absolute;left:0;right:0;bottom:0;height:20px;display:flex;gap:1px}
+.pv .film i{flex:1;opacity:.55}
+.dact{display:flex;gap:4px;margin-top:16px;margin-left:-11px}
+
+/* ---------- trash dock ---------- */
+#dock{flex:none;margin-top:auto;transition:padding .3s,border-color .3s;border-top:1px solid var(--line);display:flex;align-items:flex-end;gap:12px;padding:12px 14px 10px 18px;min-width:0}
+#dock .dk{flex:1;min-width:0;align-self:center}
+#dock .dt{color:var(--t2);font-size:12px}
+#dock .dsz{font-size:20px;font-weight:600;letter-spacing:-.3px;font-variant-numeric:tabular-nums;line-height:1.3}
+#dock .ds{font-size:12px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dock .da{display:flex;gap:2px;margin:6px 0 0 -9px}
+#bin{position:relative;width:54px;height:60px;flex:none;cursor:pointer;margin-top:0;transition:width .38s cubic-bezier(.3,1.2,.5,1),height .38s cubic-bezier(.3,1.2,.5,1),margin-top .38s ease}
+#bin .bw{position:absolute;right:0;bottom:0;transform-origin:50% 100%}
+#bin .bw>*{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible}
+#bin .back{z-index:1}
+#pile{z-index:2}
+#pile i{position:absolute;border-radius:50%;box-shadow:inset -1.5px -1.5px 0 #00000038,inset 1px 1px 0 #ffffff30}
+#pile i.new{animation:settle .24s cubic-bezier(.3,1.6,.5,1)}
+@keyframes settle{0%{transform:translateY(-6px) scale(1.1,.85)}60%{transform:translateY(1px) scale(.95,1.06)}}
+#bin .front{z-index:62;pointer-events:none}
+#bin .lidl{z-index:63;pointer-events:none}
+#bin .body,#bin .rim{transition:stroke .2s}
+#bin .lid{transition:transform .22s cubic-bezier(.3,1.5,.5,1)}
+#bin.open .lid{transform:rotate(-42deg)}
+#bin.open .lid2{transform:rotate(42deg)}
+#bin.hot .lid{transform:rotate(-58deg)}
+#bin.hot .lid2{transform:rotate(58deg)}
+#bin.hot .body{stroke:#ffffff55}
+#bin.lidless.open .rim{stroke:#7a7a83}
+#bin.lidless.hot .bw{transform:scale(1.06)}
+#bin.bump .bw{animation:bump .26s cubic-bezier(.3,1.6,.5,1)}
+@keyframes bump{40%{transform:translateY(1.5px) scale(1.03,.97)}}
+#bin.dump .lid{animation:dumpLid .55s ease}
+#bin.dump .lid2{animation:dumpLid2 .55s ease}
+@keyframes dumpLid{20%,60%{transform:rotate(-70deg)}}
+@keyframes dumpLid2{20%,60%{transform:rotate(70deg)}}
+#dock{position:relative;z-index:3}
+#right.huge #bin{margin-top:-34px}
+#detail{transition:padding-bottom .38s ease}
+#right.huge #detail{padding-bottom:40px}
+.ball{position:fixed;left:0;top:0;z-index:60;pointer-events:none;border-radius:50%;will-change:transform;box-shadow:inset -2px -2px 0 #00000030,inset 1.5px 1.5px 0 #ffffff35}
+.shard{position:fixed;left:0;top:0;z-index:59;pointer-events:none;overflow:visible}
+.morph{position:fixed;z-index:59;pointer-events:none;border-radius:6px}
+/* ---------- scenes ---------- */
+main{transition:grid-template-columns .5s cubic-bezier(.2,.8,.2,1)}
+main.wide{grid-template-columns:minmax(0,1fr) clamp(340px,46%,640px)}
+#right{position:relative}
+#right.off #dock{border-top-color:transparent}
+#right.off .disk,#right.off .lhead,#right.off #list,#right.off #detail,#right.off #dock .dk{visibility:hidden}
+#right[data-scene="eval"] #bin{opacity:0;pointer-events:none}
+#bin{transform-origin:50% 50%;transition:width .38s cubic-bezier(.3,1.2,.5,1),height .38s cubic-bezier(.3,1.2,.5,1),margin-top .38s ease,transform .55s cubic-bezier(.2,.8,.2,1),opacity .2s}
+#bin.hero{cursor:default;z-index:4}
+#pile i{transition:transform .15s,box-shadow .15s}
+#bin.hero #pile i{cursor:pointer}
+#pile i.hl{transform:scale(1.35);box-shadow:0 0 0 1px #fff,inset -1.5px -1.5px 0 #00000038;z-index:2}
+#chartwrap,.lbot,.ltop .tabs,.legend{transition:opacity .45s ease,transform .55s cubic-bezier(.2,.8,.2,1)}
+#left.recede #chartwrap{opacity:.28;transform:scale(.9);cursor:pointer}
+#left.recede .lbot,#left.recede .ltop .tabs{opacity:0;pointer-events:none}
+.scene{position:absolute;inset:0;z-index:2;display:none;flex-direction:column;min-height:0}
+.scene.on{display:flex}
+.scene .x{position:absolute;right:12px;top:12px;color:var(--t3)}
+.scene .x svg{width:16px;height:16px}
+#scTrash{padding:22px 0 var(--hero,180px)}
+.tsh{position:relative;padding:0 24px}
+.tsh .k{color:var(--t3);font-size:12px}
+.tsh .big{font-size:34px;font-weight:600;letter-spacing:-.8px;line-height:1.2;margin-top:2px;font-variant-numeric:tabular-nums}
+.tsh .sub{color:var(--t3);font-size:12px;margin-top:2px}
+.tsh .x{top:-10px}
+.tsb{display:flex;gap:2px;height:4px;border-radius:2px;overflow:hidden;margin:16px 24px 4px;flex:none}
+.tsl{flex:1;overflow:auto;padding:6px 12px 10px;min-height:0;-webkit-mask-image:linear-gradient(#000 calc(100% - 28px),transparent)}
+.tg{margin-top:12px}
+.tg-h{display:flex;align-items:center;gap:8px;padding:4px 12px;font-size:12px;color:var(--t2);font-weight:500}
+.tg-h i{width:6px;height:6px;border-radius:50%}
+.tg-h em{font-style:normal;color:var(--t4);font-weight:400}
+.tg-h span{margin-left:auto;color:var(--t3);font-weight:400;font-variant-numeric:tabular-nums}
+.tg-why{padding:0 12px 4px 26px;font-size:11.5px;color:var(--review);opacity:.85}
+.tr{display:flex;align-items:center;gap:10px;padding:5px 12px;border-radius:7px}
+.tr:hover,.tr.hl{background:var(--hov)}
+.tr i{width:7px;height:7px;border-radius:50%;flex:none}
+.tr .n{flex:1;min-width:0}
+.tr .n div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tr .n small{display:block;color:var(--t4);font:10.5px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tr b{font-weight:400;color:var(--t2);font-size:12px;font-variant-numeric:tabular-nums}
+.tr button{border:0;background:none;border-radius:5px;padding:2px 7px;cursor:pointer;color:var(--t3);font-size:12px;visibility:hidden}
+.tr:hover button,.tr.hl button{visibility:visible}
+.tr button:hover{color:var(--text);background:var(--hov)}
+.tsa{position:absolute;left:18px;right:18px;bottom:26px;display:flex;align-items:flex-end;pointer-events:none}
+.tsa .btn{pointer-events:auto}
+.sheet.inline{width:auto;max-height:none;height:100%;background:none;border:0;border-radius:0;box-shadow:none;animation:none;position:relative}
+.sheet.inline .sh{padding-right:56px}
+.sheet.inline .x{top:14px}
+/* ---------- status ---------- */
+footer{display:flex;align-items:center;gap:16px;padding:0 12px 0 14px;font-size:11.5px;color:var(--t4);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;border-top:1px solid var(--line)}
+footer b{color:var(--t3);font-weight:400}
+footer .tabs button{font-size:11.5px;padding:1px 7px;color:var(--t4)}
+footer .tabs button.on{color:var(--t2)}
+footer a{color:var(--t3);cursor:pointer}
+footer a:hover{color:var(--text)}
+footer .ok{color:var(--safe)}
+
+/* ---------- fly chip ---------- */
+.fly{position:fixed;left:0;top:0;z-index:60;pointer-events:none;display:flex;align-items:center;gap:7px;padding:5px 10px;border-radius:7px;background:var(--bg3);box-shadow:0 8px 20px -6px #000b;white-space:nowrap;font-size:12px;will-change:transform,opacity}
+.fly i{width:6px;height:6px;border-radius:50%}
+.fly span{max-width:170px;overflow:hidden;text-overflow:ellipsis}
+.fly b{color:var(--t3);font-weight:400}
+
+/* ---------- tooltip ---------- */
+#tip{position:fixed;z-index:50;pointer-events:none;background:var(--bg3);border-radius:7px;padding:7px 10px;font-size:12px;box-shadow:0 10px 24px -8px #000c;display:none;max-width:300px}
+#tip .tn{font-weight:500;word-break:break-all}
+#tip .ts{color:var(--t3);margin-top:1px;font-variant-numeric:tabular-nums}
+
+/* ---------- modal ---------- */
+.modal{position:fixed;inset:0;background:#0009;z-index:70;display:none;align-items:center;justify-content:center}
+.modal.on{display:flex;animation:fade .15s}
+@keyframes fade{from{opacity:0}}
+.sheet{width:min(760px,94vw);max-height:86vh;background:var(--bg2);border:1px solid var(--line);border-radius:12px;box-shadow:0 30px 80px -20px #000;display:flex;flex-direction:column;overflow:hidden;animation:pop .18s ease-out}
+.sheet .sh{padding:22px 24px 0}
+.sheet h2{margin:0;font-size:16px;font-weight:600}
+.sheet .scope{color:var(--t3);font-size:12px;margin-top:3px}
+.ebar{display:flex;flex:none;height:6px;border-radius:3px;overflow:hidden;gap:2px;margin:18px 24px 0}
+.ebar i{display:block;height:100%}
+.elg{display:flex;flex:none;gap:22px;padding:10px 24px 6px;font-size:12px;color:var(--t3);flex-wrap:wrap}
+.elg div{display:flex;align-items:center;gap:7px}
+.elg i{width:6px;height:6px;border-radius:50%}
+.elg b{color:var(--text);font-weight:500;font-variant-numeric:tabular-nums}
+.evl{overflow:auto;flex:1;padding:4px 14px 8px}
+.evg{margin:0 10px;font-size:12px;color:var(--t2);display:flex;align-items:center;gap:8px;padding:14px 0 6px;position:sticky;top:0;background:var(--bg2);z-index:1;font-weight:500}
+.evg em{font-style:normal;color:var(--t4);font-weight:400}
+.evg label{margin-left:auto;cursor:pointer;color:var(--t3);font-weight:400}
+.evg label:hover{color:var(--text)}
+.evr{display:grid;grid-template-columns:18px 1fr auto;gap:12px;align-items:center;padding:6px 10px;border-radius:6px;cursor:pointer}
+.evr:hover{background:var(--hov)}
+.evr input{accent-color:var(--text);width:14px;height:14px;margin:0}
+.evr .n{min-width:0}
+.evr .n div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.evr .n small{display:block;color:var(--t4);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.evr b{text-align:right;font-variant-numeric:tabular-nums;font-weight:400;color:var(--t2)}
+.sheet .ft{display:flex;align-items:center;gap:6px;padding:14px 18px 14px 24px;border-top:1px solid var(--line)}
+.sheet .ft .sum{color:var(--t3)}
+.sheet .ft .sum b{color:var(--text);font-weight:500}
+.confirm{width:min(420px,92vw)}
+.confirm p{padding:8px 24px 18px;margin:0;color:var(--t2)}
+.confirm .ft{border-top:0;padding-top:0}
+
+/* ---------- toast ---------- */
+#toasts{position:fixed;left:calc(50% - 196px);bottom:92px;transform:translateX(-50%);display:flex;flex-direction:column;gap:6px;align-items:center;z-index:80}
+.toast{background:var(--bg3);border-radius:8px;padding:7px 8px 7px 14px;display:flex;gap:6px;align-items:center;box-shadow:0 12px 30px -10px #000;animation:pop .18s ease-out;white-space:nowrap}
+.toast span{margin-right:6px}
+.toast button{border:0;background:none;border-radius:5px;padding:3px 8px;cursor:pointer;color:var(--text);font-size:12px;font-weight:500}
+.toast button:hover{background:var(--hov)}
+.toast.out{opacity:0;transform:translateY(4px);transition:.25s}
+.freed{position:fixed;z-index:65;pointer-events:none;font-size:20px;font-weight:600;color:var(--safe);white-space:nowrap;font-variant-numeric:tabular-nums}
+.shake{animation:shake .35s}
+@keyframes shake{20%,60%{transform:translateX(-3px)}40%,80%{transform:translateX(3px)}}
+body.static *{animation:none!important;transition:none!important}
+/* auto-clean analysis */
+.lbot{position:relative}
+#anBar{position:absolute;left:20px;right:16px;top:-10px;height:2px;background:var(--safe);opacity:.55;border-radius:1px;transform:scaleX(0);transform-origin:0 50%}
+#left.busy #bEval{visibility:hidden}
+#left.busy #bFree{background:var(--bg3);color:var(--text);font-weight:500}
+.lbot .cs .ph{color:var(--t2);margin-right:10px}
+.lbot .cs .hz{color:var(--review)}
+.spin{display:inline-block;width:10px;height:10px;border-radius:50%;border:1.5px solid var(--t4);border-top-color:var(--safe);margin-right:9px;vertical-align:-1px;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* back / up affordances */
+.up{display:inline-flex;align-items:center;gap:2px;height:26px;padding:0 9px 0 4px;border:0;border-radius:7px;background:var(--bg3);color:var(--t2);cursor:pointer;font-size:12.5px;white-space:nowrap;max-width:150px;flex:none;transition:background .12s,color .12s}
+.up:hover{background:#2b2b30;color:var(--text)}
+.up svg{width:16px;height:16px;flex:none}
+.up span{overflow:hidden;text-overflow:ellipsis}
+.up[hidden]{display:none}
+.up.in{animation:upIn .22s cubic-bezier(.2,.8,.2,1)}
+@keyframes upIn{from{opacity:0;transform:translateX(-6px)}}
+.lhead .lup{width:24px;height:24px;margin:0 -2px 3px -6px;padding:0;border:0;border-radius:6px;background:none;color:var(--t3);cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none}
+.lhead .lup:hover{background:var(--hov);color:var(--text)}
+.lhead .lup svg{width:16px;height:16px}
+.lhead .lup[hidden]{display:none}
+/* habit learning */
+.hb{display:inline-block;margin-left:6px;padding:0 5px;border-radius:4px;font-size:10.5px;color:var(--review);background:#d4a6561a;vertical-align:1px}
+.hline{margin:6px 0 0 15px;font-size:12px;color:var(--t3)}
+.hline b{color:var(--review);font-weight:500}
+.confirm .src{display:grid;gap:4px;margin-top:12px;font-size:12.5px}
+.confirm .src div{display:flex;align-items:center;gap:8px;color:var(--t3)}
+.confirm .src i{width:6px;height:6px;border-radius:50%}
+.confirm .src b{color:var(--text);font-weight:500}
+.confirm .src span{margin-left:auto;font-variant-numeric:tabular-nums}
+.confirm .hx{margin-top:12px;padding:10px 12px;border-radius:8px;background:#d4a6560d;display:grid;gap:6px}
+.confirm .hxr b{display:block;color:var(--review);font-weight:500;font-size:12.5px}
+.confirm .hxr span{font-size:12px;color:var(--t3)}
+.confirm .hx .btn{justify-self:start;margin-left:-9px}
+.evr .n small .hz{color:var(--review)}
+/* ---------- r7: message-pop confirm (grows out of the panel's top-left corner) ---------- */
+.ask{position:absolute;left:14px;top:14px;z-index:30;width:min(372px,calc(100% - 28px));background:#252529;border-radius:4px 16px 16px 16px;
+  box-shadow:0 1px 0 #ffffff0d inset,0 24px 60px -18px #000,0 6px 18px -8px #0008;padding:16px 16px 12px 16px;transform-origin:0 0;display:none}
+.ask.on{display:block}
+.ask .ah{display:flex;gap:12px;align-items:flex-start}
+.ask .av{width:30px;height:30px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;background:#de7f861c;color:var(--risky)}
+.ask .av.n{background:#ffffff0f;color:var(--t2)}
+.ask .av svg{width:16px;height:16px}
+.ask h3{margin:5px 0 0;font-size:14px;font-weight:600;letter-spacing:-.1px}
+.ask .ab{margin:6px 0 0 42px;color:var(--t2);font-size:12.5px;line-height:1.6}
+.ask .ab .src{display:grid;gap:5px;margin-top:12px}
+.ask .ab .src div{display:flex;align-items:center;gap:8px;color:var(--t3)}
+.ask .ab .src i{width:6px;height:6px;border-radius:50%;flex:none}
+.ask .ab .src b{color:var(--text);font-weight:500}
+.ask .ab .src span{margin-left:auto;font-variant-numeric:tabular-nums}
+.ask .ab .sbar{display:flex;gap:2px;height:3px;border-radius:2px;overflow:hidden;margin-top:12px}
+.ask .ab .hx{margin-top:12px;padding:10px 12px;border-radius:10px;background:#d4a65610;display:grid;gap:6px}
+.ask .ab .hxr b{display:block;color:var(--review);font-weight:500}
+.ask .ab .hxr span{font-size:12px;color:var(--t3)}
+.ask .ab .hx .btn{justify-self:start;margin-left:-9px;color:var(--review)}
+.ask .af{display:flex;justify-content:flex-end;gap:4px;margin-top:14px}
+#right>*:not(.ask):not(#dock),#right #dock .dk{transition:opacity .25s,filter .25s}
+#right.asking>*:not(.ask):not(#dock),#right.asking #dock .dk{opacity:.18;filter:blur(1.5px);pointer-events:none}
+/* ---------- r7: trash view of the sunburst ---------- */
+.tvt{position:absolute;left:24px;top:14px;display:flex;align-items:baseline;gap:10px;opacity:0;pointer-events:none;transition:opacity .3s;white-space:nowrap}
+.tvt b{font-weight:600;font-size:13px}
+.tvt span{color:var(--t3);font-size:12px}
+#left.tv .tvt{opacity:1}
+#left.tv .crumbs,#left.tv #bUp,#left.tv .ltop .tabs,#left.tv .lbot,#left.tv .legend{opacity:0;pointer-events:none}
+.ltop{position:relative}
+.crumbs,#bUp{transition:opacity .3s}
+#tvLg{position:absolute;left:20px;bottom:36px;display:grid;gap:3px;font-size:12px;color:var(--t3);pointer-events:none;opacity:0;transition:opacity .3s}
+#left.tv #tvLg{opacity:1}
+#tvLg div{display:flex;align-items:center;gap:8px}
+#tvLg i{width:6px;height:6px;border-radius:2px;flex:none}
+#tvLg b{color:var(--t2);font-weight:400;margin-left:8px;font-variant-numeric:tabular-nums}
+/* ---------- r7: polish ---------- */
+.tsh .big small{font-size:18px;font-weight:500;color:var(--t2);margin-left:4px;letter-spacing:0}
+.tsh .big{font-weight:650}
+#scTrash::before{content:"";position:absolute;left:0;right:0;bottom:0;height:var(--hero,180px);pointer-events:none;
+  background:radial-gradient(60% 70% at 50% 100%,#ffffff0a,transparent 70%)}
+#bin::after{content:"";position:absolute;left:8%;right:8%;bottom:-5px;height:9px;border-radius:50%;background:radial-gradient(closest-side,#000c,transparent);opacity:0;transition:opacity .4s;z-index:0;pointer-events:none}
+#bin.hero::after{opacity:1}
+.btn.soft-danger{color:var(--risky);background:#de7f8614;font-weight:500}
+.btn.soft-danger:hover{background:#de7f8626;color:#f0a0a6}
+.tsh .bs{position:absolute;right:52px;top:-6px}
+.tg-h{letter-spacing:.1px}
+.tr{padding:6px 12px}
+.tr i{width:6px;height:6px}
+.tsb{height:3px;margin-top:18px}
+/* ---------- r7: bin drawing styles ---------- */
+#bin.s-line svg *{fill:none!important;stroke:#c9c9d1!important;stroke-width:1.15px!important}
+#bin.s-line .back *{stroke:#ffffff1c!important}
+#bin.s-line .front path:not(.body):not(.rim),#bin.s-line .front rect:not([height="5"]):not([height="5.5"]){stroke:#ffffff30!important}
+#bin.s-line #pile i{background:none!important;box-shadow:inset 0 0 0 1.25px currentColor}
+#bin.s-line #pile i.hl{background:currentColor!important}
+#bin.s-clay .back path:first-child{fill:var(--cl3)!important}
+#bin.s-clay .back ellipse{fill:var(--cl3)!important;stroke:var(--cl1)!important}
+#bin.s-clay .front .body{fill:url(#clB)!important;fill-opacity:.6;stroke:#ffffff26!important;stroke-width:.8px!important}
+#bin.s-clay .front path:not(.body):not(.rim){stroke:#0000002a!important}
+#bin.s-clay .front .rim{stroke:var(--cl1)!important}
+#bin.s-clay .front rect,#bin.s-clay .lidl rect{fill:url(#clL)!important;stroke:none!important}
+#bin.s-clay .lidl path{stroke:var(--cl1)!important}
+#bin.s-clay .front rect[height="9"]{fill:#00000055!important;stroke:#ffffff14!important}
+#bin.s-clay circle{fill:#232328!important;stroke:#ffffff14!important}
+#bin.s-clay circle[r="3"]{fill:var(--cl1)!important}
+#bin.s-clay #pile i{box-shadow:inset -2px -2.5px 3px #0006,inset 1.5px 1.5px 2px #ffffff70}
+/* ---------- r8: HUD theme (holographic linework, overlay instruments) ---------- */
+#hud{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
+#chartwrap::before,#chartwrap::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .4s}
+body.hud #chartwrap::before{opacity:1;background:
+  radial-gradient(closest-side at 50% 50%,#3fd2c412,transparent 78%),
+  linear-gradient(#7fe7f20a 1px,transparent 1px) 50% 50%/32px 32px,
+  linear-gradient(90deg,#7fe7f20a 1px,transparent 1px) 50% 50%/32px 32px;
+  -webkit-mask-image:radial-gradient(closest-side,#000 55%,transparent 100%);mask-image:radial-gradient(closest-side,#000 55%,transparent 100%)}
+body.hud #chartwrap::after{opacity:.55;z-index:2;background:repeating-linear-gradient(0deg,transparent 0 2px,#0000002e 2px 3px)}
+body.hud #tip{display:none!important}
+body.hud .crumbs span.cur{color:#bff5ee}
+/* ---------- r8: auto-clean, the left panel's one big action ---------- */
+#bFree.big{height:46px;padding:0 8px 0 16px;border-radius:13px;font-size:14.5px;font-weight:600;gap:10px;position:relative;overflow:hidden;isolation:isolate;
+  background:linear-gradient(180deg,#f6f6f8,#dcdce1);color:#111114;box-shadow:0 1px 0 #ffffffb0 inset,0 12px 28px -12px #6fc39a99,0 2px 6px -2px #0008;transition:transform .15s,box-shadow .2s,background .3s,color .3s}
+#bFree.big:hover{transform:translateY(-1px);box-shadow:0 1px 0 #fff inset,0 16px 34px -12px #6fc39acc,0 2px 6px -2px #0008}
+#bFree.big:active{transform:translateY(1px) scale(.985)}
+body.hud #bFree.big{background:linear-gradient(180deg,#9af3ea,#3fc4b8);color:#03211e;box-shadow:0 1px 0 #e6fffc inset,0 0 0 1px #7fe7f255,0 14px 34px -12px #3fd2c4cc,0 0 26px -8px #3fd2c4aa}
+#bFree.big svg{width:18px;height:18px;flex:none}
+#bFree .bsz{font:600 12px var(--mono);padding:4px 8px;border-radius:8px;background:#0000001c;letter-spacing:-.2px;font-variant-numeric:tabular-nums}
+#bFree .bsz:empty{display:none}
+#bFree.big::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(105deg,transparent 35%,#ffffffa0 50%,transparent 65%);transform:translateX(-120%)}
+#bFree.big:hover::after{transition:transform .7s ease;transform:translateX(120%)}
+#bFree .bfill{position:absolute;inset:0;z-index:-1;transform-origin:0 50%;transform:scaleX(var(--p,0));background:linear-gradient(90deg,#3fd2c430,#3fd2c4a0);transition:transform .12s linear}
+#left.busy #bFree.big{background:#10201f;color:#c9faf4;box-shadow:0 0 0 1px #3fd2c455 inset,0 0 30px -10px #3fd2c4aa}
+#left.busy #bFree.big::before{content:"";position:absolute;inset:0;z-index:-1;background:repeating-linear-gradient(115deg,transparent 0 10px,#3fd2c40f 10px 20px);animation:stripes .8s linear infinite}
+@keyframes stripes{to{background-position:22px 0}}
+body.hud #bFree.big:disabled,#bFree.big:disabled{background:var(--bg3);color:var(--t3);box-shadow:none;transform:none}
+#bFree.big:disabled::after{display:none}
+.lbot{padding-bottom:18px}
+/* ---------- r9: MECH theme — light armour plates, cobalt / signal red / caution yellow, chamfered cuts ---------- */
+body.mech{--bg:#e4e7eb;--bg2:#f1f3f5;--bg3:#d6dae0;--hov:#16224012;--sel:#1f4fa81f;--line:#16224021;
+  --text:#141a26;--t2:#444e62;--t3:#737c8f;--t4:#9ea6b4;--safe:#1d8a58;--review:#c08400;--risky:#d7262e;--prot:#6b7385;
+  --mb:#1f4fa8;--mr:#d7262e;--my:#f2b705;--cut:polygon(9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%,0 9px)}
+body.mech #tip{display:none!important}
+body.mech #right{background:var(--bg2);border-left:1px solid var(--line);box-shadow:-1px 0 0 #fff inset}
+body.mech #right::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;z-index:4;pointer-events:none;
+  background:linear-gradient(90deg,var(--mb) 0 58%,transparent 58% 60%,var(--mr) 60% 74%,transparent 74% 76%,var(--my) 76% 86%,transparent 86%)}
+body.mech #chartwrap::before{opacity:1;background:
+  linear-gradient(#16224010 1px,transparent 1px) 50% 50%/120px 120px,
+  linear-gradient(90deg,#16224010 1px,transparent 1px) 50% 50%/120px 120px,
+  linear-gradient(#16224008 1px,transparent 1px) 50% 50%/24px 24px,
+  linear-gradient(90deg,#16224008 1px,transparent 1px) 50% 50%/24px 24px;
+  -webkit-mask-image:radial-gradient(closest-side,#000 60%,transparent 100%);mask-image:radial-gradient(closest-side,#000 60%,transparent 100%)}
+body.mech .crumbs span.cur{color:var(--text);font-weight:600}
+body.mech .tabs button.on{background:#fff;color:var(--text);box-shadow:0 0 0 1px var(--line),0 1px 0 #16224018}
+body.mech footer{background:var(--bg3);border-top:1px solid var(--line)}
+body.mech footer .tabs button.on{background:var(--text);color:#fff;box-shadow:none}
+body.mech .btn.solid:hover,body.mech .up:hover{background:#c9ced6}
+body.mech .btn.primary{background:var(--mb);color:#fff;clip-path:var(--cut);border-radius:0}
+body.mech .btn.primary:hover{background:#2a5fc4;color:#fff}
+body.mech .btn.danger,body.mech .btn.danger:hover{background:var(--mr);color:#fff;clip-path:var(--cut);border-radius:0}
+body.mech .btn.primary:disabled{background:var(--bg3);color:var(--t3)}
+body.mech .ask{background:#fff;border-radius:0;clip-path:polygon(0 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%);
+  box-shadow:none;outline:1px solid var(--line);border-top:3px solid var(--mr)}
+body.mech .ask .av.n{background:var(--bg3)}
+body.mech .toast,body.mech .fly{background:#fff;box-shadow:0 0 0 1px var(--line),0 12px 28px -14px #16224066;border-radius:0;clip-path:var(--cut)}
+body.mech .sheet{box-shadow:0 30px 70px -30px #16224066}
+body.mech #bin.hot .body{stroke:#16224066}
+body.mech #bin.s-line svg *{stroke:#3a4356!important}
+body.mech #bin.s-line .back *{stroke:#16224030!important}
+body.mech #bin.s-line .front path:not(.body):not(.rim),body.mech #bin.s-line .front rect:not([height="5"]):not([height="5.5"]){stroke:#16224055!important}
+body.mech #bin.s-clay circle{fill:#3a4356!important}
+body.mech ::-webkit-scrollbar-thumb{background:#16224024;background-clip:padding-box}
+/* the big action: cobalt plate, caution-yellow edge, chamfered */
+body.mech #bFree.big{border-radius:0;clip-path:var(--cut);color:#fff;
+  background:linear-gradient(90deg,var(--my) 0 5px,#141a26 5px 7px,transparent 7px),linear-gradient(180deg,#2d63c8,#1b4499);
+  box-shadow:0 1px 0 #ffffff40 inset}
+body.mech #bFree.big:hover{box-shadow:0 1px 0 #ffffff60 inset;filter:brightness(1.06)}
+body.mech #bFree .bsz{background:#ffffff26;border-radius:0}
+body.mech #bFree .bfill{background:linear-gradient(90deg,#f2b70530,#f2b705a0)}
+body.mech #left.busy #bFree.big{background:#141a26;color:#fff;box-shadow:none}
+body.mech #left.busy #bFree.big::before{background:repeating-linear-gradient(115deg,transparent 0 10px,#f2b7051f 10px 20px)}
+body.mech #bFree.big:disabled{background:var(--bg3);color:var(--t3);filter:none}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#ffffff14;border-radius:4px;border:2px solid transparent;background-clip:padding-box}::-webkit-scrollbar-thumb:hover{background-color:#ffffff22}::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+<div id="app">
+  <main>
+    <section id="left">
+      <div class="ltop">
+        <button class="up" id="bUp" hidden title="返回上级（Esc）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 6l-6 6 6 6"/></svg><span id="bUpTxt"></span></button><div class="crumbs" id="crumbs"></div>
+        <div class="tvt" id="tvT"></div>
+        <div class="tabs" id="cmode"><button data-m="cat" class="on">目录</button><button data-m="safety">安全性</button></div>
+      </div>
+      <div id="chartwrap">
+        <canvas id="cv"></canvas>
+        <canvas id="hud"></canvas>
+        <div class="legend" id="legend"></div>
+        <div id="tvLg"></div>
+        <div id="scan"><div class="num" id="scanNum">0</div><div class="path" id="scanPath"></div><div style="display:none"><div id="scanBar"></div></div></div>
+      </div>
+      <div class="lbot"><div id="anBar"></div>
+        <div class="cs" id="cleanSum"></div>
+        <button class="btn" id="bEval">查看评估</button>
+        <button class="btn primary big" id="bFree"><span class="bfill"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.6 4.2 4.2 1.6-4.2 1.6L12 15.1l-1.6-4.2-4.2-1.6 4.2-1.6z"/><path d="M18.5 14.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/><path d="M5.5 15.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"/></svg><span id="bFreeTxt">自动清理</span><span class="bsz" id="bFreeSz"></span></button>
+      </div>
+    </section>
+    <aside id="right">
+      <div class="disk">
+        <div class="dt"><span id="dVol"></span>
+          <button class="btn icon sm" id="bRescan" title="重新扫描"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4.5V9h-4.5"/></svg></button></div>
+        <div class="diskbar"><div class="u" id="dbU"></div><div class="t" id="dbT"></div></div>
+        <div class="disktxt" id="dTxt"></div>
+      </div>
+      <div class="lhead">
+        <button class="lup" id="lUp" hidden title="返回上级（Esc）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button><div style="min-width:0;flex:1"><div class="t" id="lTitle"></div><div class="c" id="lCount"></div></div>
+        <div class="tabs" id="lsort"><button data-s="size" class="on">大小</button><button data-s="name">名称</button><button data-s="age">时间</button></div>
+      </div>
+      <div id="list"><div id="spacer"></div></div>
+      <div id="detail"></div>
+      <div class="scene" id="scTrash"></div>
+      <div class="scene" id="scEval"><div class="sheet inline" id="scEvalIn"></div></div>
+      <div class="ask" id="ask" role="alertdialog"></div>
+      <div id="dock">
+        <div class="dk">
+          <div class="dt" id="dkTitle">废纸篓</div>
+          <div class="dsz" id="dkSize">0 B</div>
+          <div class="ds" id="tSz"></div>
+          <div class="da"><button class="btn sm" id="dkView">查看</button><button class="btn sm" id="dkEmpty" disabled>清空</button></div>
+        </div>
+        <div id="bin"></div>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <div class="tabs" id="theme"><button data-t="hud">HUD</button><button data-t="mech">机甲</button><button data-t="classic">经典</button></div>
+    <div class="tabs" id="plat"><button data-p="mac">macOS</button><button data-p="win">Windows</button><button data-p="linux">Linux</button></div>
+    <span><b id="sNodes">0</b> 个节点</span>
+    <span>扫描 <b id="sScan">-</b></span>
+    <span>布局 <b id="sLayout">-</b></span>
+    <span>绘制 <b id="sDraw">-</b> · <b id="sArcs">-</b> 扇区</span>
+    <span class="sp"></span>
+    <a id="stress">压力测试 ×10</a>
+    <span>已释放 <b class="ok" id="sFreed">0 B</b></span>
+  </footer>
+</div>
+
+
+<div id="tip"></div>
+<div id="toasts"></div>
+<script>
+'use strict';
+/* =========================================================================
+   Utilities
+   ========================================================================= */
+const $ = s => document.querySelector(s);
+const KB = 1024, MB = KB * 1024, GB = MB * 1024;
+const TAU = Math.PI * 2, A0 = -Math.PI / 2;
+const NOW = Date.now();
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function fmt(b) {
+  if (b < KB) return Math.round(b) + ' B';
+  const u = ['KB','MB','GB','TB']; let i = -1;
+  do { b /= 1024; i++; } while (b >= 1000 && i < 3);
+  return (b >= 100 ? b.toFixed(0) : b >= 10 ? b.toFixed(1) : b.toFixed(2)) + ' ' + u[i];
+}
+const num = n => n.toLocaleString('en-US');
+const ease = t => t < .5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2;
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const lerp = (a, b, t) => a + (b - a) * t;
+function ageStr(d) { if (d < 1) return '今天'; if (d < 30) return d + ' 天前'; if (d < 365) return Math.round(d/30) + ' 个月前'; return (d/365).toFixed(1) + ' 年前'; }
+function dateStr(d) { return new Date(NOW - d * 864e5).toISOString().slice(0, 10); }
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+let R = mulberry32(1);
+const pick = a => a[(R() * a.length) | 0];
+const ri = (a, b) => a + ((R() * (b - a + 1)) | 0);
+const HEX = '0123456789abcdef';
+const hex = n => { let s = ''; for (let i = 0; i < n; i++) s += HEX[(R() * 16) | 0]; return s; };
+const uuid = () => (hex(8)+'-'+hex(4)+'-'+hex(4)+'-'+hex(4)+'-'+hex(12)).toUpperCase();
+const bySize = (a, b) => b.size - a.size;
+
+/* =========================================================================
+   Synthetic filesystem (in the real app this comes from the Go scanner)
+   ========================================================================= */
+let UID = 0;
+function F(name, size, age) {
+  return {id: UID++, name, size: Math.max(1, Math.round(size)), age: age == null ? (R()*R()*900)|0 : age,
+          children: null, parent: null, depth: 0, cnt: 1, x0: 0, x1: 0, ox0: 0, ox1: 0};
+}
+function D(name, ...kids) {
+  return {id: UID++, name, size: 0, age: 0, children: kids.flat(Infinity).filter(Boolean),
+          parent: null, depth: 0, cnt: 1, x0: 0, x1: 0, ox0: 0, ox1: 0};
+}
+function spread(total, count, namer, ageFn) {
+  const w = new Array(count); let s = 0;
+  for (let i = 0; i < count; i++) { const x = Math.exp(R() * R() * 7); w[i] = x; s += x; }
+  const out = new Array(count);
+  for (let i = 0; i < count; i++) out[i] = F(namer(i), total * w[i] / s, ageFn ? ageFn(i) : undefined);
+  return out;
+}
+const WORDS = ['index','core','main','utils','render','vendor','chunk','worker','theme','assets','model','store','api','hooks','layout','config','schema','router','parser','client','server','types','events','stream','cache','sync','auth','image','table','graph'];
+const nm = exts => i => `${WORDS[i % WORDS.length]}${i >= WORDS.length ? '-' + ((i / WORDS.length) | 0) : ''}.${pick(exts)}`;
+const PKG_BASE = ['react','react-dom','lodash','webpack','babel-core','typescript','eslint','postcss','tailwindcss','vite','esbuild','rollup','jest','vitest','chalk','commander','yargs','axios','express','koa','debug','semver','glob','minimatch','rxjs','zod','dayjs','moment','uuid','ws','socket.io','prettier','terser','acorn','core-js','regenerator','tslib','next','vue','svelte','three','d3','echarts','sharp','sass','less','graphql','apollo','prisma','mongoose','redis','pg','mysql2','dotenv','cross-env','nodemon','husky','lint-staged','fs-extra'];
+const PKG_SUF = ['','-core','-utils','-plugin','-loader','-parser','-compat','-cli','-types','-config','-runtime'];
+function pkgNames(n) {
+  const out = [], B = PKG_BASE.length, S = PKG_SUF.length;
+  for (let j = 0; j < n; j++) out.push(PKG_BASE[j % B] + PKG_SUF[((j / B) | 0) % S] + (j >= B * S ? '-' + ((j / (B * S)) | 0) : ''));
+  return out;
+}
+function pkg(name) {
+  const k = [F('package.json', ri(1, 6) * KB), F('README.md', ri(2, 40) * KB), F('LICENSE', 1100)];
+  k.push(D(R() < .5 ? 'dist' : 'lib', spread(ri(30, 3000) * KB * (R() < .08 ? 10 : 1), ri(2, 18), nm(['js','mjs','cjs','d.ts','map']))));
+  if (R() < .3) k.push(D('src', spread(ri(20, 800) * KB, ri(2, 10), nm(['ts','js']))));
+  return D(name, k);
+}
+function nodeModules(n) {
+  return D('node_modules', D('.bin', spread(200 * KB, ri(10, 40), i => `bin-${i}`)),
+    pkgNames(n).map(pkg), D('@types', ['node','react','lodash','jest','express'].map(pkg)));
+}
+function project(name, kind) {
+  const ext = {rust: ['rs'], go: ['go'], swift: ['swift']}[kind] || ['ts','tsx','css','json'];
+  const k = [
+    D('src', spread(ri(2, 40) * MB, ri(40, 300), nm(ext))),
+    D('.git', D('objects', D('pack', spread(ri(50, 1500) * MB, ri(2, 8), () => `pack-${hex(40)}.pack`))), F('index', ri(100, 900) * KB)),
+    F('README.md', ri(2, 20) * KB)];
+  if (kind === 'js') {
+    k.push(nodeModules(ri(300, 800)), F('package.json', 3 * KB), F('package-lock.json', ri(200, 900) * KB));
+    if (R() < .7) k.push(D(pick(['dist','build','.next']), spread(ri(20, 900) * MB, ri(30, 200), nm(['js','css','map','html']))));
+  }
+  if (kind === 'rust') k.push(D('target',
+      D('debug', D('deps', spread(ri(2, 9) * GB, ri(400, 1200), () => `lib${pick(WORDS)}-${hex(16)}.rlib`)),
+                 D('build', spread(ri(200, 800) * MB, ri(50, 200), () => `${pick(WORDS)}-${hex(16)}`)),
+                 D('incremental', spread(ri(500, 2000) * MB, ri(100, 300), () => `s-${hex(10)}.bin`))),
+      D('release', spread(ri(1, 3) * GB, ri(100, 300), () => `lib${pick(WORDS)}-${hex(16)}.rlib`))),
+    F('Cargo.toml', 2 * KB), F('Cargo.lock', 80 * KB));
+  if (kind === 'go') k.push(F('go.mod', 2 * KB), F('go.sum', 60 * KB), D('bin', F(name, ri(15, 60) * MB)));
+  if (kind === 'swift') k.push(D('build', spread(ri(300, 900) * MB, ri(40, 120), nm(['o','swiftmodule','a']))));
+  return D(name, k);
+}
+function repoDir(scale) {
+  const js = ['web-console','design-system','ml-dashboard','landing','admin-portal'];
+  const ps = [project('fanfree','go'), project('rust-engine','rust'), project('mobile-app','swift'), project('cli-tools','go')];
+  for (let s = 0; s < scale; s++) for (const j of js) ps.push(project(s ? `${j}-${s}` : j, 'js'));
+  return D('repo', ps);
+}
+const docsDir = name => D(name, D('Work', spread(ri(1, 4) * GB, ri(80, 200), nm(['pdf','docx','xlsx','pptx','key','md']))),
+  D('Papers', spread(ri(300, 900) * MB, ri(40, 120), nm(['pdf']))), spread(ri(200, 900) * MB, ri(30, 80), nm(['pdf','txt','md','pages','zip'])));
+const camera = (n, total) => spread(total, n, i => `IMG_${1000 + i}.${R() < .12 ? 'mov' : pick(['heic','jpg'])}`);
+const videosDir = name => D(name, spread(ri(18, 45) * GB, ri(15, 40), i => `${pick(['Trip','Meetup','Screen Recording','Family','Talk','Demo','Wedding'])} ${2018 + ri(0, 7)}-${i}.${pick(['mov','mp4','mkv'])}`, () => ri(60, 1600)));
+const installers = list => list.map(([n, s]) => F(n, s, ri(2, 520)));
+const app = (name, size) => D(name, D('Contents', D('MacOS', F(name.replace('.app', ''), size * .08)),
+  D('Frameworks', spread(size * .6, ri(10, 60), nm(['framework','dylib']))), D('Resources', spread(size * .32, ri(20, 120), nm(['png','car','nib','strings','lproj'])))));
+const winApp = (name, size) => D(name, spread(size, ri(20, 160), nm(['dll','exe','pak','dat','json'])));
+
+function buildMac(scale) {
+  const cacheApps = ['com.apple.Safari','com.spotify.client','Google','com.microsoft.VSCode.ShipIt','Homebrew','com.tinyspeck.slackmacgap','com.figma.Desktop','JetBrains','pip','Yarn','ms-playwright','com.openai.chat','node-gyp','go-build','CloudKit'];
+  const big = {JetBrains: 3, Yarn: 3, 'go-build': 3, Homebrew: 2, 'ms-playwright': 2};
+  const home = D('me',
+    D('Library',
+      D('Caches', cacheApps.map(a => D(a, spread(ri(80, 2600) * MB * (big[a] || 1), ri(30, 400), () => hex(12))))),
+      D('Developer',
+        D('Xcode',
+          D('DerivedData', ['FanFree','Runner','Pods','MyGoApp','Widgets','Playground'].map(p => D(`${p}-${hex(28)}`,
+            D('Build', D('Intermediates.noindex', spread(ri(1, 5) * GB, ri(100, 500), nm(['o','d','dia','swiftmodule']))),
+                       D('Products', spread(ri(200, 1500) * MB, ri(5, 30), nm(['app','dSYM','framework'])))),
+            D('Index.noindex', spread(ri(300, 1500) * MB, ri(50, 200), () => `${hex(8)}.unit`)),
+            D('Logs', spread(ri(10, 200) * MB, ri(5, 40), () => `${hex(8)}.xcactivitylog`))))),
+          D('iOS DeviceSupport', ['17.5.1 (21F90)','17.6 (21G80)','18.0 (22A3354)','18.1 (22B83)','18.2 (22C152)'].map(v =>
+            D(`iPhone15,2 ${v}`, D('Symbols', spread(ri(2, 5) * GB, ri(30, 120), nm(['dylib','dyld'])))))),
+          D('Archives', spread(ri(2, 6) * GB, ri(5, 15), i => `FanFree ${i + 1}.xcarchive`))),
+        D('CoreSimulator', D('Devices', Array.from({length: 8}, () => D(uuid(), D('data', spread(ri(500, 4500) * MB, ri(40, 200), nm(['db','plist','sqlite','png'])))))),
+          D('Caches', spread(ri(1, 4) * GB, ri(20, 80), () => hex(10))))),
+      D('Application Support', ['Slack','Code','Google','Steam','Figma','Spotify','discord','Claude'].map(a => D(a, spread(ri(100, 6000) * MB, ri(20, 200), nm(['db','json','ldb','log','bin']))))),
+      D('Containers', D('com.docker.docker', D('Data', D('vms', D('0', D('data', F('Docker.raw', ri(35, 64) * GB, 2))))))),
+      D('Logs', ['DiagnosticReports','CoreSimulator','JetBrains','Homebrew'].map(a => D(a, spread(ri(50, 900) * MB, ri(20, 200), i => `${a}-${i}.log`)))),
+      D('Mail', D('V10', spread(ri(2, 8) * GB, ri(200, 600), () => `${hex(8)}.emlx`))),
+      D('Messages', D('Attachments', spread(ri(3, 9) * GB, ri(200, 500), nm(['heic','jpg','mov','pdf']))))),
+    D('Downloads', installers([['Xcode_16.1.xip', 7.2*GB],['Docker.dmg', 620*MB],['ubuntu-24.04-desktop-amd64.iso', 5.8*GB],['GoogleChrome.dmg', 230*MB],['Figma.dmg', 190*MB],['zoomusInstallerFull.pkg', 110*MB],['go1.23.3.darwin-arm64.pkg', 70*MB],['node-v22.11.0.pkg', 90*MB],['OBS-Studio-30.2.dmg', 380*MB],['android-studio-2024.2-mac_arm.dmg', 1.3*GB],['Slack-4.41.dmg', 180*MB]]),
+      spread(ri(1, 4) * GB, ri(40, 90), nm(['pdf','jpg','png','zip','csv','mp4']))),
+    docsDir('Documents'),
+    D('Desktop', spread(ri(300, 1500) * MB, ri(30, 90), i => `Screenshot 2026-${String(ri(1, 11)).padStart(2, '0')}-${String(ri(1, 28)).padStart(2, '0')} ${i}.png`)),
+    D('Pictures', D('Photos Library.photoslibrary', D('originals', '0123456789ABCDEF'.split('').map(c => D(c, camera(ri(80, 200), ri(2, 5) * GB)))), D('database', spread(800 * MB, 12, nm(['sqlite','db'])))),
+      D('Screenshots', spread(ri(200, 800) * MB, ri(40, 100), i => `CleanShot ${i}.png`))),
+    videosDir('Movies'),
+    D('Music', spread(ri(1, 5) * GB, ri(100, 300), nm(['m4a','mp3','flac']))),
+    repoDir(scale),
+    D('.Trash', spread(ri(1, 5) * GB, ri(20, 80), nm(['zip','mov','psd','dmg','pdf']))),
+    D('.npm', D('_cacache', D('content-v2', spread(ri(1, 4) * GB, ri(300, 800), () => hex(40))), D('index-v5', spread(ri(20, 80) * MB, ri(100, 300), () => hex(40))))),
+    D('.gradle', D('caches', D('modules-2', spread(ri(1, 4) * GB, ri(200, 500), nm(['jar','pom']))), D('transforms-4', spread(ri(1, 3) * GB, ri(100, 300), () => hex(32)))),
+      D('wrapper', D('dists', spread(ri(300, 900) * MB, 4, i => `gradle-8.${i}-bin.zip`)))),
+    D('.cargo', D('registry', D('cache', spread(ri(300, 1200) * MB, ri(200, 500), () => `${pick(WORDS)}-0.${ri(1, 9)}.${ri(0, 20)}.crate`)), D('src', spread(ri(600, 2400) * MB, ri(200, 600), nm(['rs'])))),
+      D('bin', spread(ri(50, 200) * MB, 8, i => `cargo-${pick(WORDS)}${i}`))),
+    D('.rustup', D('toolchains', spread(ri(1, 3) * GB, ri(30, 80), nm(['rlib','so','dylib'])))),
+    D('.ssh', F('id_ed25519', 411), F('id_ed25519.pub', 96), F('known_hosts', 12 * KB)));
+
+  const apps = [['Xcode.app', 12*GB],['Docker.app', 2*GB],['Google Chrome.app', 1.4*GB],['Slack.app', 520*MB],['Figma.app', 500*MB],['Spotify.app', 380*MB],['Final Cut Pro.app', 6*GB],['Logic Pro.app', 3*GB],['Android Studio.app', 3.2*GB],['Microsoft Word.app', 2.4*GB],['Microsoft Excel.app', 2*GB],['Claude.app', 600*MB],['Visual Studio Code.app', 640*MB],['iMovie.app', 3*GB],['GarageBand.app', 2.2*GB]];
+  return D('Macintosh HD',
+    D('System', D('Library', D('Frameworks', spread(6.5 * GB, 400, nm(['framework','dylib','bundle']))),
+      D('PrivateFrameworks', spread(5 * GB, 600, nm(['framework']))), D('CoreServices', spread(2 * GB, 120, nm(['app','bundle','plist']))),
+      D('Extensions', spread(900 * MB, 200, nm(['kext'])))), D('Applications', spread(1.6 * GB, 40, nm(['app'])))),
+    D('Applications', apps.map(([n, s]) => app(n, s))),
+    D('Library', D('Developer', D('CommandLineTools', spread(3.4 * GB, 300, nm(['dylib','h','a','tbd'])))), D('Fonts', spread(600 * MB, 200, nm(['ttf','otf']))),
+      D('Application Support', spread(2 * GB, 100, nm(['db','plist','bundle'])))),
+    D('private', D('var', D('vm', F('sleepimage', 4 * GB, 0), F('swapfile0', 2 * GB, 0), F('swapfile1', 2 * GB, 0)), D('folders', spread(ri(2, 6) * GB, 200, () => hex(10))))),
+    D('opt', D('homebrew', D('Cellar', ['go','node','python@3.13','llvm','ffmpeg','postgresql@16','rust','opencv','qt'].map(b => D(b, spread(ri(80, 2400) * MB, ri(20, 200), nm(['dylib','a','h','py']))))))),
+    D('Users', home));
+}
+
+function buildWin(scale) {
+  const progs = [['Microsoft Office', 4.2*GB],['Google',1.6*GB],['Docker',2.4*GB],['JetBrains',5.5*GB],['NVIDIA Corporation',2.1*GB],['Adobe',8.4*GB],['Microsoft VS Code',640*MB],['Steam',1.2*GB],['Git',380*MB],['nodejs',120*MB],['Go',260*MB]];
+  return D('C:',
+    D('Windows',
+      D('System32', spread(7 * GB, 900, nm(['dll','exe','sys','mui']))), D('SysWOW64', spread(2.4 * GB, 500, nm(['dll','exe']))),
+      D('WinSxS', spread(9.5 * GB, 1200, () => `amd64_microsoft-windows-${pick(WORDS)}_${hex(16)}`)),
+      D('Temp', spread(ri(1, 4) * GB, ri(100, 400), () => `${hex(8)}.tmp`)),
+      D('SoftwareDistribution', D('Download', spread(ri(3, 8) * GB, ri(30, 120), () => hex(32))), D('DataStore', spread(600 * MB, 20, nm(['edb','log'])))),
+      D('Installer', spread(ri(4, 9) * GB, ri(80, 200), () => `${hex(6)}.msi`)),
+      D('Logs', D('CBS', spread(ri(300, 1500) * MB, ri(10, 40), i => `CbsPersist_${i}.log`))),
+      D('Prefetch', spread(ri(40, 120) * MB, ri(100, 300), () => `${pick(WORDS).toUpperCase()}.EXE-${hex(8).toUpperCase()}.pf`)),
+      D('Fonts', spread(900 * MB, 300, nm(['ttf','otf'])))),
+    F('pagefile.sys', 16 * GB, 0), F('hiberfil.sys', 12.7 * GB, 0), F('swapfile.sys', 256 * MB, 0),
+    D('Program Files', progs.map(([n, s]) => winApp(n, s))),
+    D('Program Files (x86)', [['Microsoft',1.1*GB],['Steam',900*MB],['Windows Kits',3.3*GB]].map(([n, s]) => winApp(n, s))),
+    D('ProgramData', D('Package Cache', spread(ri(2, 6) * GB, ri(30, 80), () => `{${uuid()}}`)),
+      D('Microsoft', D('Windows Defender', spread(1.2 * GB, 100, nm(['vdm','bin','log']))))),
+    D('$Recycle.Bin', D('S-1-5-21-' + ri(1e8, 9e8), spread(ri(2, 6) * GB, ri(30, 80), nm(['zip','mp4','psd','docx'])))),
+    D('Users', D('me',
+      D('AppData',
+        D('Local',
+          D('Temp', spread(ri(2, 7) * GB, ri(200, 600), () => `${hex(8)}.tmp`)),
+          D('Google', D('Chrome', D('User Data', D('Default', D('Cache', D('Cache_Data', spread(ri(600, 2400) * MB, ri(200, 600), () => `f_${hex(6)}`))),
+            D('Code Cache', spread(ri(100, 600) * MB, ri(50, 200), () => hex(16))), F('History', 40 * MB))))),
+          D('Microsoft', D('Windows', D('INetCache', spread(ri(200, 1500) * MB, ri(100, 300), () => hex(10)))), D('Edge', D('User Data', spread(ri(400, 1800) * MB, ri(50, 150), () => hex(12))))),
+          D('CrashDumps', spread(ri(300, 3000) * MB, ri(4, 20), i => `${pick(WORDS)}.exe.${1000 + i}.dmp`)),
+          D('npm-cache', D('_cacache', spread(ri(1, 4) * GB, ri(300, 700), () => hex(40)))),
+          D('Docker', D('wsl', D('disk', F('docker_data.vhdx', ri(30, 60) * GB, 2)))),
+          D('Packages', spread(ri(1, 5) * GB, ri(40, 120), () => `Microsoft.${pick(WORDS)}_${hex(13)}`))),
+        D('Roaming', ['Code','Slack','discord','npm','Spotify'].map(a => D(a, spread(ri(100, 2500) * MB, ri(20, 150), nm(['json','db','ldb','log'])))))),
+      D('Downloads', installers([['Win11_24H2_Chinese_Simplified_x64.iso', 5.4*GB],['DockerDesktopInstaller.exe', 610*MB],['ChromeSetup.exe', 1.4*MB],['VSCodeUserSetup-x64.exe', 98*MB],['node-v22.11.0-x64.msi', 31*MB],['go1.23.3.windows-amd64.msi', 72*MB],['SteamSetup.exe', 2.3*MB],['android-studio-2024.2-windows.exe', 1.2*GB],['OBS-Studio-30.2-Windows-Installer.exe', 140*MB]]),
+        spread(ri(1, 4) * GB, ri(40, 90), nm(['pdf','jpg','png','zip','csv','mp4']))),
+      docsDir('Documents'),
+      D('Pictures', D('Camera Roll', camera(ri(600, 1600), ri(20, 50) * GB)), D('Screenshots', spread(ri(200, 800) * MB, ri(40, 100), i => `Screenshot ${i}.png`))),
+      videosDir('Videos'),
+      D('Desktop', spread(ri(300, 1500) * MB, ri(20, 60), nm(['png','lnk','docx','zip']))),
+      repoDir(scale),
+      D('.gradle', D('caches', spread(ri(1, 4) * GB, ri(200, 500), nm(['jar','pom'])))),
+      D('.cargo', D('registry', spread(ri(300, 1600) * MB, ri(200, 500), () => `${pick(WORDS)}-0.${ri(1, 9)}.crate`))))));
+}
+
+function buildLinux(scale) {
+  return D('/',
+    D('usr', D('lib', spread(7 * GB, 900, nm(['so','a','py','pyc']))), D('share', spread(4 * GB, 700, nm(['png','svg','mo','xml','desktop']))),
+      D('bin', spread(1.2 * GB, 400, i => `${pick(WORDS)}${i}`)), D('local', spread(2 * GB, 200, nm(['so','py','js'])))),
+    D('var',
+      D('cache', D('apt', D('archives', spread(ri(1, 4) * GB, ri(80, 250), i => `${pick(WORDS)}_${ri(1, 9)}.${ri(0, 20)}-${ri(1, 4)}_amd64.deb`)))),
+      D('lib', D('docker', D('overlay2', Array.from({length: 24}, () => D(hex(64), spread(ri(100, 3000) * MB, ri(20, 120), nm(['so','py','bin','js'])))))),
+        D('snapd', D('snaps', spread(ri(2, 5) * GB, ri(8, 20), i => `${pick(['core22','firefox','gnome-46','code','spotify'])}_${ri(100, 9000)}.snap`)))),
+      D('log', D('journal', D(hex(32), spread(ri(1, 4) * GB, ri(20, 60), i => `system@${hex(16)}-${i}.journal`))),
+        spread(ri(100, 800) * MB, ri(20, 60), i => `${pick(['syslog','kern','auth','dpkg','Xorg'])}.log.${i}`))),
+    D('snap', ['core22','firefox','gnome-46-2404','code','spotify'].map(s => D(s, spread(ri(200, 1500) * MB, ri(30, 100), nm(['so','bin','js']))))),
+    D('opt', D('google', spread(900 * MB, 100, nm(['so','pak','bin']))), D('jetbrains', spread(3 * GB, 300, nm(['jar','so'])))),
+    D('boot', spread(400 * MB, 12, i => `vmlinuz-6.8.0-${40 + i}-generic`)),
+    F('swapfile', 8 * GB, 0),
+    D('tmp', spread(ri(200, 1500) * MB, ri(50, 200), () => `tmp${hex(8)}`)),
+    D('home', D('me',
+      D('.cache', ['pip','yarn','mozilla','google-chrome','go-build','JetBrains','thumbnails','huggingface','typescript'].map(a => D(a, spread(ri(80, 3000) * MB * (a === 'huggingface' ? 4 : 1), ri(30, 400), () => hex(12))))),
+      D('.local', D('share', D('Trash', D('files', spread(ri(1, 4) * GB, ri(20, 80), nm(['zip','mp4','tar.gz','pdf'])))), D('Steam', spread(ri(8, 30) * GB, ri(50, 200), nm(['vpk','bin','pak']))))),
+      D('.config', ['Code','discord','google-chrome','JetBrains'].map(a => D(a, spread(ri(50, 900) * MB, ri(20, 120), nm(['json','db','ldb']))))),
+      D('.npm', D('_cacache', spread(ri(1, 4) * GB, ri(300, 700), () => hex(40)))),
+      D('.gradle', D('caches', spread(ri(1, 3) * GB, ri(200, 500), nm(['jar','pom'])))),
+      D('.cargo', D('registry', spread(ri(300, 1600) * MB, ri(200, 500), () => `${pick(WORDS)}-0.${ri(1, 9)}.crate`))),
+      D('.rustup', D('toolchains', spread(ri(1, 3) * GB, ri(30, 80), nm(['rlib','so'])))),
+      D('Downloads', installers([['ubuntu-24.04-desktop-amd64.iso', 5.8*GB],['code_1.95_amd64.deb', 100*MB],['Obsidian-1.7.AppImage', 120*MB],['google-chrome-stable_current_amd64.deb', 110*MB],['cuda_12.6.2_linux.run', 4.3*GB],['steam_latest.deb', 4*MB]]),
+        spread(ri(1, 4) * GB, ri(40, 90), nm(['pdf','jpg','png','zip','csv','mp4']))),
+      docsDir('Documents'),
+      D('Pictures', camera(ri(400, 900), ri(8, 20) * GB)),
+      videosDir('Videos'),
+      repoDir(scale))));
+}
+
+const PLAT = {
+  mac:   {label: 'macOS',   build: buildMac,   prefix: '',   sep: '/',  rootPath: '/',   reveal: '在 Finder 中显示',     trash: '废纸篓', seed: 7},
+  win:   {label: 'Windows', build: buildWin,   prefix: 'c:', sep: '\\', rootPath: 'C:\\', reveal: '在资源管理器中显示',   trash: '回收站', seed: 11},
+  linux: {label: 'Linux',   build: buildLinux, prefix: '',   sep: '/',  rootPath: '/',   reveal: '在文件管理器中显示',   trash: '回收站', seed: 13},
+};
+
+/* =========================================================================
+   Safety rules engine
+   ========================================================================= */
+const LV = {
+  safe:      {c: '#6fc39a', l: '可清理',   t: '可安全清理'},
+  review:    {c: '#d4a656', l: '需复核',   t: '建议复核后清理'},
+  risky:     {c: '#de7f86', l: '个人数据', t: '个人数据 · 谨慎'},
+  protected: {c: '#7f838e', l: '系统保护', t: '系统保护 · 禁止删除'},
+};
+const BULLETS = {
+  safe: ['内容可自动重建或重新下载', '不包含个人创作数据', '移至废纸篓后可随时还原'],
+  review: ['可能包含应用配置或本地状态', '删除前请确认是否仍在使用'],
+  risky: ['可能包含无法恢复的个人文件', '请确认已有备份再删除'],
+  protected: ['操作系统或系统服务依赖', 'FanFree 禁止删除此项'],
+};
+const RULES = new Map();
+function rule(names, level, reason, opt = {}) {
+  for (const n of names.split('|')) { if (!RULES.has(n)) RULES.set(n, []); RULES.get(n).push({level, reason, ...opt}); }
+}
+// --- safe
+rule('caches', 'safe', '应用缓存，删除后应用会按需重建', {p: /^\/users\/[^/]+\/library\/caches$/, split: 1, tag: '缓存'});
+rule('caches', 'safe', 'Gradle 依赖与构建缓存，按需重新下载', {p: /\.gradle\/caches$/, pick: 1, tag: '包缓存'});
+rule('.cache', 'safe', '用户级缓存（pip / yarn / 浏览器等），可安全清理', {p: /^\/home\/[^/]+\/\.cache$/, split: 1, tag: '缓存'});
+rule('deriveddata', 'safe', 'Xcode 编译中间产物，重新编译时自动生成', {split: 1, tag: '构建产物'});
+rule('ios devicesupport', 'safe', '旧版 iOS 设备调试符号，连接设备时会重新下载', {split: 1, tag: '开发缓存'});
+rule('archives', 'safe', 'APT 已下载的安装包，软件已安装完成', {p: /^\/var\/cache\/apt\/archives$/, pick: 1, tag: '包缓存'});
+rule('archives', 'review', 'Xcode 归档，含 dSYM，可能用于线上崩溃符号化', {p: /xcode\/archives$/, pick: 1, tag: '开发'});
+rule('node_modules', 'safe', 'npm 依赖目录，可通过 npm install 重新安装', {pick: 1, tag: '依赖'});
+rule('target', 'safe', 'Cargo 构建产物，cargo build 可重新生成', {p: /\/repo\/[^/]+\/target$/, pick: 1, tag: '构建产物'});
+rule('dist|build|.next', 'safe', '项目构建输出，可重新构建', {p: /\/repo\/[^/]+\/[^/]+$/, pick: 1, tag: '构建产物'});
+rule('.npm|npm-cache', 'safe', 'npm 下载缓存，等价于 npm cache clean', {pick: 1, tag: '包缓存'});
+rule('registry', 'safe', 'Cargo crate 缓存，按需重新下载', {p: /\.cargo\/registry$/, pick: 1, tag: '包缓存'});
+rule('.trash', 'safe', '废纸篓中已删除的文件', {pick: 1, tag: '废纸篓'});
+rule('$recycle.bin', 'safe', '回收站中已删除的文件', {pick: 1, tag: '回收站'});
+rule('trash', 'safe', '回收站中已删除的文件', {p: /\.local\/share\/trash$/, pick: 1, tag: '回收站'});
+rule('logs', 'safe', '应用与诊断日志，仅用于排错', {p: /^\/users\/[^/]+\/library\/logs$/, split: 1, tag: '日志'});
+rule('logs', 'safe', 'Windows 组件日志（CBS 等）', {p: /^c:\/windows\/logs$/, pick: 1, tag: '日志'});
+rule('log', 'safe', '系统日志，旧日志可安全清理（journalctl --vacuum）', {p: /^\/var\/log$/, split: 1, tag: '日志'});
+rule('temp', 'safe', '临时文件，生成它们的进程已不再需要', {p: /(^c:\/windows\/temp|appdata\/local\/temp)$/, pick: 1, tag: '临时文件'});
+rule('tmp', 'safe', '系统临时目录', {p: /^\/tmp$/, pick: 1, tag: '临时文件'});
+rule('prefetch', 'safe', '预读缓存，系统会自动重建', {pick: 1, tag: '缓存'});
+rule('download', 'safe', 'Windows 更新下载缓存，更新已安装', {p: /softwaredistribution\/download$/, pick: 1, tag: '更新缓存'});
+rule('inetcache', 'safe', 'Edge / IE 网页缓存', {pick: 1, tag: '缓存'});
+rule('cache', 'safe', 'Chrome 浏览器缓存', {p: /user data\/default\/cache$/, pick: 1, tag: '缓存'});
+rule('crashdumps', 'safe', '程序崩溃转储文件，仅用于排错', {pick: 1, tag: '诊断'});
+// --- review
+rule('coresimulator', 'review', 'iOS 模拟器设备数据，删除后需重新创建模拟器', {pick: 1, tag: '开发'});
+rule('com.docker.docker', 'review', 'Docker 虚拟磁盘（镜像与卷），建议使用 docker system prune', {pick: 1, tag: '虚拟机'});
+rule('docker', 'review', 'Docker 镜像与容器卷，建议使用 docker system prune', {p: /(^\/var\/lib\/docker|appdata\/local\/docker)$/, pick: 1, tag: '虚拟机'});
+rule('application support|roaming|.config', 'review', '应用数据，可能含配置、登录态与本地数据库', {tag: '应用数据'});
+rule('applications|program files|program files (x86)|opt|snap|snapd', 'review', '已安装的应用程序，请通过卸载流程移除', {tag: '应用'});
+rule('installer', 'review', 'MSI 安装缓存，删除会导致程序无法修复或卸载', {p: /^c:\/windows\/installer$/, tag: '系统缓存'});
+rule('package cache', 'review', '安装程序包缓存，部分软件修复时需要', {pick: 1, tag: '安装缓存'});
+rule('hiberfil.sys', 'review', '休眠文件：可执行 powercfg /h off 关闭休眠来释放', {tag: '系统'});
+rule('downloads', 'review', '下载目录，需逐项确认', {tag: '下载'});
+rule('movies|videos', 'review', '视频文件，请确认已备份', {tag: '媒体'});
+rule('.rustup|steam', 'review', '工具链 / 游戏数据，删除后需重新安装', {tag: '应用数据'});
+// --- risky
+rule('documents|desktop|pictures|music|mail|messages|.ssh|.git|photos library.photoslibrary', 'risky', '个人数据，删除后无法重新生成', {tag: '个人数据'});
+// --- protected
+rule('system|library|private|usr|bin|sbin|etc|boot|lib|windows', 'protected', '操作系统组件，删除会导致系统无法运行', {p: /^(c:)?\/[^/]+$/, tag: '系统'});
+rule('winsxs|system32|syswow64', 'protected', 'Windows 组件存储，删除会导致系统无法运行', {tag: '系统'});
+rule('pagefile.sys|swapfile.sys|swapfile|sleepimage|swapfile0|swapfile1', 'protected', '虚拟内存 / 交换文件，由系统管理', {tag: '系统'});
+
+const INSTALLER_EXT = new Set(['dmg','pkg','xip','iso','exe','msi','deb','rpm','appimage','run']);
+const R_INST_OLD = {level: 'safe', reason: '安装包，超过 30 天未使用，对应软件已安装', pick: 1, tag: '安装包'};
+const R_INST_NEW = {level: 'review', reason: '近期下载的安装包，可能尚未安装', pick: 1, tag: '安装包'};
+const V_DEFAULT = {level: 'review', reason: '未识别的内容，删除前请确认用途', tag: '未分类'};
+const V_ROOT = {level: 'protected', reason: '磁盘根目录', tag: '系统'};
+
+function ownRule(n) {
+  if (n.r !== undefined) return n.r;
+  let r = null;
+  const list = RULES.get(n.name.toLowerCase());
+  if (list) for (const x of list) if (!x.p || x.p.test(n.p)) { r = x; break; }
+  if (!r && !n.children && n.parent && n.parent.name.toLowerCase() === 'downloads' && INSTALLER_EXT.has(extOf(n.name)))
+    r = n.age > 30 ? R_INST_OLD : R_INST_NEW;
+  return (n.r = r);
+}
+function verdict(n) {
+  if (n.v) return n.v;
+  const r = ownRule(n);
+  return (n.v = r || (!n.parent ? V_ROOT : n.parent === root ? V_DEFAULT : verdict(n.parent)));
+}
+/** Collect cleanup candidates under n: non-overlapping units that can be removed as a whole. */
+function collect(n, out) {
+  const r = ownRule(n);
+  if (r) {
+    if (r.level === 'risky') return;
+    if (r.split && n.children && r.level !== 'protected') { for (const c of n.children) if (c.size) out.push({n: c, r}); return; }
+    if (r.pick && r.level !== 'protected') { out.push({n, r}); return; }
+  }
+  if (n.children) for (const c of n.children) collect(c, out);
+}
+function levelSums(n, acc) {
+  if (!n.children) { acc[verdict(n).level] += n.size; return acc; }
+  for (const c of n.children) levelSums(c, acc);
+  return acc;
+}
+
+/* =========================================================================
+   File types / preview
+   ========================================================================= */
+const CATS = {
+  video:   {c: '#c98aa8', l: '视频',       e: 'mp4 mov mkv avi m4v'},
+  image:   {c: '#7d9fd0', l: '图片',       e: 'jpg jpeg png heic gif webp psd svg'},
+  audio:   {c: '#a891c9', l: '音频',       e: 'mp3 wav flac m4a aac'},
+  archive: {c: '#c9a466', l: '安装包/归档', e: 'dmg pkg xip iso zip gz tar exe msi deb rpm appimage run snap crate jar emlx'},
+  code:    {c: '#79b39a', l: '代码/构建',   e: 'js mjs cjs ts tsx css html json go rs swift py pyc map o d a h swiftmodule rlib dylib so dll framework bundle kext tbd dia pom app dsym lproj nib car'},
+  doc:     {c: '#9b93c4', l: '文档',       e: 'pdf docx doc md txt key pages xlsx pptx csv strings'},
+  data:    {c: '#6fb0b8', l: '数据/虚拟磁盘', e: 'db sqlite ldb plist dat bin raw vhdx unit pack edb vpk pak vdm journal'},
+  log:     {c: '#8b8f99', l: '日志',       e: 'log xcactivitylog dmp'},
+  other:   {c: '#62656e', l: '其他/缓存',   e: ''},
+};
+const EXT2CAT = {};
+for (const k in CATS) for (const e of CATS[k].e.split(' ')) if (e) EXT2CAT[e] = k;
+function extOf(name) { const i = name.lastIndexOf('.'); return i > 0 ? name.slice(i + 1).toLowerCase() : ''; }
+const catOf = n => EXT2CAT[extOf(n.name)] || 'other';
+
+const ICON_DIR = c => `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="${c}" d="M3 6.5C3 5.7 3.7 5 4.5 5h4.6l2 2h8.4c.8 0 1.5.7 1.5 1.5v9c0 .8-.7 1.5-1.5 1.5h-15C3.7 19 3 18.3 3 17.5z"/></svg>`;
+const ICON_FILE = c => `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="${c}" opacity=".9" d="M6 3h8l5 5v12c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1V4c0-.6.4-1 1-1z"/><path fill="#0006" d="M14 3v5h5z"/></svg>`;
+const VICON = {
+  safe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>',
+  review: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16v.5"/></svg>',
+  risky: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l9 16H3z"/><path d="M12 10v4M12 17v.3"/></svg>',
+  protected: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+};
+const ICON_TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6.5 7l1 12.5c0 .8.7 1.5 1.5 1.5h6c.8 0 1.5-.7 1.5-1.5L17.5 7"/></svg>`;
+const ICON_LOCK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>`;
+
+/* =========================================================================
+   State
+   ========================================================================= */
+let platKey = 'mac', P = PLAT.mac, scale = 1;
+let root = null, focus = null, selected = null, hover = null;
+let view = {x0: 0, x1: 1, d: 0};
+let zoom = null, morph = null, intro = null, radar = null, MT = 1;
+let colorMode = 'cat', sortMode = 'size';
+let dirty = true, VER = 0;
+let capacity = 0, freedTotal = 0;
+const trash = {items: [], inflightN: 0, inflightS: 0};
+let lastBatch = [];
+let hits = [], selHit = null, centerHot = false;
+
+/* =========================================================================
+   Tree ops
+   ========================================================================= */
+function finalize(n, parent, depth, pp) {
+  n.parent = parent; n.depth = depth;
+  n.p = parent ? pp + '/' + n.name.toLowerCase() : pp;
+  if (n.children) {
+    let s = 0, c = 1, a = 1e9;
+    for (const ch of n.children) { finalize(ch, n, depth + 1, n.p); s += ch.size; c += ch.cnt; if (ch.age < a) a = ch.age; }
+    n.size = s; n.cnt = c; n.age = a === 1e9 ? 0 : a;
+    n.children.sort(bySize);
+  } else n.cnt = 1;
+}
+function layout(n, x0, x1) {
+  n.x0 = x0; n.x1 = x1;
+  const ch = n.children; if (!ch) return;
+  if (n.size <= 0) { for (const c of ch) layout(c, x0, x0); return; }
+  const k = (x1 - x0) / n.size; let x = x0;
+  for (const c of ch) { const w = c.size * k; layout(c, x, x + w); x += w; }
+}
+const px0 = n => MT >= 1 ? n.x0 : n.ox0 + (n.x0 - n.ox0) * MT;
+const px1 = n => MT >= 1 ? n.x1 : n.ox1 + (n.x1 - n.ox1) * MT;
+function snapshot(n = root) {
+  n.ox0 = px0(n); n.ox1 = px1(n);
+  if (n.children) for (const c of n.children) snapshot(c);
+}
+function setOx(n, x) { n.ox0 = n.ox1 = x; if (n.children) for (const c of n.children) setOx(c, x); }
+function attached(n) { for (let a = n; a; a = a.parent) if (a.gone) return false; return true; }
+function detach(n) {
+  const p = n.parent; const i = p.children.indexOf(n); if (i < 0) return;
+  p.children.splice(i, 1); n.gone = true;
+  for (let a = p; a; a = a.parent) { a.size -= n.size; a.cnt -= n.cnt; if (a !== p) a.children.sort(bySize); if (a.gone) break; }
+}
+function reattach(n) {
+  const p = n.parent; p.children.push(n); p.children.sort(bySize); n.gone = false;
+  for (let a = p; a; a = a.parent) { a.size += n.size; a.cnt += n.cnt; if (a !== p) a.children.sort(bySize); if (a.gone) break; }
+}
+function displayPath(n) {
+  if (!n.parent) return P.rootPath;
+  const parts = []; for (let a = n; a.parent; a = a.parent) parts.push(a.name);
+  parts.reverse();
+  return P.rootPath + parts.join(P.sep);
+}
+
+/* =========================================================================
+   Sunburst renderer (Canvas 2D, pruned traversal, angle-threshold aggregation)
+   ========================================================================= */
+const cv = $('#cv'), ctx = cv.getContext('2d', {alpha: true});
+const RINGS = 6, MIN_A = 0.011, GAP = 1.5;
+const MONO = 'ui-monospace,"SF Mono",Menlo,Consolas,monospace';
+const FONT = 'Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif';
+let WW = 0, HH = 0, DPR = 1, CX = 0, CY = 0, RAD = 0, R0 = 0, RW = 0;
+function resize() {
+  const r = $('#chartwrap').getBoundingClientRect();
+  DPR = window.devicePixelRatio || 1;
+  WW = r.width; HH = r.height;
+  cv.width = Math.round(WW * DPR); cv.height = Math.round(HH * DPR);
+  if (typeof hudSize === 'function') { hudSize(); hudLast = 0; }
+  CX = WW / 2; CY = HH / 2;
+  RAD = Math.max(60, Math.min(WW, HH) / 2 - (HUD ? 54 : 30));
+  R0 = RAD * .27; RW = (RAD - R0) / RINGS;
+  dirty = true;
+  // ResizeObserver runs after rAF but before paint: redraw now, or a resizing column paints an empty canvas
+  if (root && typeof draw === 'function') { draw(performance.now()); dirty = false; }
+}
+new ResizeObserver(resize).observe($('#chartwrap'));
+
+// themes: 'hud' (dark holographic), 'mech' (light armour plates, tricolour markings), 'classic'.
+// HUD = overlay instruments on (hud + mech); MECH = light plate rendering.
+const THEMES = ['hud', 'mech', 'classic'];
+let THEME = (() => { try { const t = localStorage.getItem('fanfree.theme'); return THEMES.includes(t) ? t : 'hud'; } catch (e) { return 'hud'; } })();
+let HUD = THEME !== 'classic', MECH = THEME === 'mech';
+const TPAL = {
+  classic: {fg: '#ececef', dim: '#74747d', ink: 'rgba(255,255,255,', agg: 'rgba(255,255,255,.045)'},
+  hud: {fg: '#ececef', dim: '#74747d', ink: 'rgba(255,255,255,', agg: 'rgba(127,231,242,.05)'},
+  mech: {fg: '#141a26', dim: '#6f7789', ink: 'rgba(20,32,64,', agg: 'rgba(20,32,64,.07)'},
+};
+let TP = TPAL[THEME];
+function setTheme(t) {
+  if (!THEMES.includes(t)) t = 'hud';
+  THEME = t; HUD = t !== 'classic'; MECH = t === 'mech'; TP = TPAL[t];
+  document.body.classList.toggle('hud', t === 'hud'); document.body.classList.toggle('mech', MECH);
+  try { localStorage.setItem('fanfree.theme', t); } catch (e) {}
+  document.querySelectorAll('#theme button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  resize(); if (root) renderRows();
+  if (!HUD) { hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.clearRect(0, 0, hcv.width, hcv.height); }
+  dirty = true;
+}
+// HUD palette: cyan / teal family with a cold-violet edge, so structure reads as linework rather than candy
+const HRAMP = [[0, 186, 72, 60], [.3, 198, 70, 62], [.55, 214, 60, 66], [.75, 168, 58, 56], [1, 186, 72, 60]];
+function hudRampAt(t) {
+  t = Math.min(1, Math.max(0, t));
+  let i = 1; while (i < HRAMP.length - 1 && HRAMP[i][0] < t) i++;
+  const a = HRAMP[i - 1], b = HRAMP[i], u = (t - a[0]) / (b[0] - a[0] || 1);
+  return [a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u, a[3] + (b[3] - a[3]) * u];
+}
+// mech palette: armour plates — navy, cobalt, white-grey, signal red, caution yellow, gunmetal
+const MRAMP = [[0, 224, 58, 32], [.15, 224, 58, 32], [.19, 216, 68, 48], [.3, 216, 68, 48], [.34, 214, 12, 82], [.45, 214, 12, 82], [.46, 356, 12, 82], [.49, 356, 72, 50], [.6, 356, 72, 50], [.64, 404, 92, 52], [.75, 404, 92, 52], [.76, 404, 6, 62], [.77, 212, 8, 58], [.9, 212, 10, 50], [.94, 224, 58, 32], [1, 224, 58, 32]];
+function mechRampAt(t) {
+  t = Math.min(1, Math.max(0, t));
+  let i = 1; while (i < MRAMP.length - 1 && MRAMP[i][0] < t) i++;
+  const a = MRAMP[i - 1], b = MRAMP[i], u = (t - a[0]) / (b[0] - a[0] || 1);
+  return [a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u, a[3] + (b[3] - a[3]) * u + 4];
+}
+const rampFn = () => MECH ? mechRampAt : HUD ? hudRampAt : rampAt;
+function hudRings() {
+  ctx.lineWidth = 1; ctx.strokeStyle = MECH ? 'rgba(20,32,64,.07)' : 'rgba(127,231,242,.07)';
+  for (let i = 0; i <= RINGS; i++) { ctx.beginPath(); ctx.arc(CX, CY, R0 + i * RW + .5, 0, TAU); ctx.stroke(); }
+}
+/** Paint the current path. Classic: solid fill. HUD: translucent body + bright hairline edge. */
+function paintArc(h, s, l, alpha, leaf) {
+  ctx.globalAlpha = alpha;
+  if (!HUD) { ctx.fillStyle = hsl(h, s, l); ctx.fill(); return; }
+  if (MECH) {   // cel-shaded plate: flat fill, ink outline
+    ctx.fillStyle = hsl(h, s, l); ctx.fill();
+    ctx.lineWidth = leaf ? .6 : .9; ctx.strokeStyle = leaf ? 'rgba(20,26,42,.32)' : 'rgba(20,26,42,.62)'; ctx.stroke(); return;
+  }
+  ctx.fillStyle = hsl(h, s, l * .8, leaf ? .16 : .26); ctx.fill();
+  ctx.lineWidth = .9; ctx.strokeStyle = hsl(h, Math.min(100, s + 12), Math.min(86, l + 14), leaf ? .55 : .9); ctx.stroke();
+}
+function paintRGB(c, al) {
+  ctx.globalAlpha = al;
+  if (!HUD) { ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; ctx.fill(); return; }
+  if (MECH) { ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; ctx.fill(); ctx.lineWidth = .8; ctx.strokeStyle = 'rgba(20,26,42,.5)'; ctx.stroke(); return; }
+  ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},.24)`; ctx.fill();
+  ctx.lineWidth = .9; ctx.strokeStyle = `rgba(${Math.min(255, c[0] + 40)},${Math.min(255, c[1] + 40)},${Math.min(255, c[2] + 40)},.85)`; ctx.stroke();
+}
+// glow: downsample the frame and add it back (bilinear upscale = cheap blur, one drawImage each way)
+const gcv = document.createElement('canvas'), gctx = gcv.getContext('2d');
+function glowPass() {
+  const gw = Math.max(1, cv.width >> 3), gh = Math.max(1, cv.height >> 3);
+  if (gcv.width !== gw || gcv.height !== gh) { gcv.width = gw; gcv.height = gh; }
+  gctx.clearRect(0, 0, gw, gh); gctx.imageSmoothingQuality = 'high'; gctx.drawImage(cv, 0, 0, gw, gh);
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .55;
+  ctx.imageSmoothingQuality = 'high'; ctx.drawImage(gcv, 0, 0, cv.width, cv.height); ctx.restore();
+}
+// curated hue wheel for top-level directories
+const PAL = [228, 264, 318, 350, 20, 40, 154, 174, 198, 288];
+const SAFE_H = {safe: [152, 32], review: [38, 46], risky: [356, 44], protected: [226, 6]};
+const colCache = new Map();
+function hsl(h, s, l, a = 1) {
+  h = ((Math.round(h) % 360) + 360) % 360; s = Math.round(s); l = Math.round(l);
+  const k = ((h * 101 + s) * 101 + l) * 11 + Math.round(a * 10);
+  let v = colCache.get(k);
+  if (!v) { v = a < 1 ? `hsla(${h},${s}%,${l}%,${a})` : `hsl(${h},${s}%,${l}%)`; colCache.set(k, v); }
+  return v;
+}
+/** HSL for an arc: inner rings lighter, outer rings deeper; siblings get a slight hue jitter; files desaturated. */
+function arcHSL(n, hue, ring, idx) {
+  const rr = Math.min(RINGS, Math.max(1, ring));
+  let h, s;
+  if (colorMode === 'safety') { [h, s] = SAFE_H[verdict(n).level]; h += ((idx % 5) - 2) * 2; }
+  let l;
+  if (colorMode === 'safety') l = 67 - rr * 2.8;
+  else { let L; [h, s, L] = rampFn()(hue); l = L + 6 - rr * 3.6; }
+  l += (idx & 1) * 1.6;
+  if (!n.children) { s *= .5; l -= 6; }
+  return [h, s, l];
+}
+// colour follows the arc's angular position along a curated ramp: blue → indigo → violet → rose → coral → amber → teal → cyan
+const RAMP = [[0, 214, 42, 62], [.2, 244, 34, 66], [.38, 285, 28, 66], [.54, 340, 34, 66], [.7, 382, 42, 64], [.84, 404, 44, 60], [1, 520, 28, 56]];
+function rampAt(t) {
+  t = Math.min(1, Math.max(0, t));
+  let i = 1; while (i < RAMP.length - 1 && RAMP[i][0] < t) i++;
+  const a = RAMP[i - 1], b = RAMP[i], u = (t - a[0]) / (b[0] - a[0] || 1);
+  return [a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u, a[3] + (b[3] - a[3]) * u];
+}
+const hueAt = t => t;   // arcs carry their ramp position; arcHSL resolves it
+const nodeHue = n => hueAt(((n.x0 + n.x1) / 2 - focus.x0) / ((focus.x1 - focus.x0) || 1));
+const dirColor = (n, a) => { const [h, s, l] = rampFn()(nodeHue(n)); return hsl(h, s, l, a); };
+
+/** Annular sector with softly rounded corners. */
+function shape(r0, r1, a0, a1) {
+  const s0 = A0 + a0, s1 = A0 + a1;
+  const cr = Math.min(4, (r1 - r0) / 2.5, (a1 - a0) * r0 / 2.5);
+  ctx.beginPath();
+  if (cr < 1) { ctx.arc(CX, CY, r1, s0, s1); ctx.arc(CX, CY, r0, s1, s0, true); ctx.closePath(); return; }
+  const co = Math.cos, si = Math.sin, dO = cr / r1, dI = cr / r0;
+  ctx.moveTo(CX + co(s0) * (r0 + cr), CY + si(s0) * (r0 + cr));
+  ctx.lineTo(CX + co(s0) * (r1 - cr), CY + si(s0) * (r1 - cr));
+  ctx.quadraticCurveTo(CX + co(s0) * r1, CY + si(s0) * r1, CX + co(s0 + dO) * r1, CY + si(s0 + dO) * r1);
+  ctx.arc(CX, CY, r1, s0 + dO, s1 - dO);
+  ctx.quadraticCurveTo(CX + co(s1) * r1, CY + si(s1) * r1, CX + co(s1) * (r1 - cr), CY + si(s1) * (r1 - cr));
+  ctx.lineTo(CX + co(s1) * (r0 + cr), CY + si(s1) * (r0 + cr));
+  ctx.quadraticCurveTo(CX + co(s1) * r0, CY + si(s1) * r0, CX + co(s1 - dI) * r0, CY + si(s1 - dI) * r0);
+  ctx.arc(CX, CY, r0, s1 - dI, s0 + dI, true);
+  ctx.quadraticCurveTo(CX + co(s0) * r0, CY + si(s0) * r0, CX + co(s0) * (r0 + cr), CY + si(s0) * (r0 + cr));
+  ctx.closePath();
+}
+
+function draw(now) {
+  const t0 = performance.now();
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, WW, HH);
+  hits.length = 0; selHit = null;
+  if (!root) return;
+  if (xfade) { drawXfade(now); return; }
+  if (tsun) { drawTrashSun(); return; }
+  const sweep = TAU;
+  // intro: rings grow outward one after another (radial growth, not an angular fan)
+  const grow = ring => { if (!intro) return 1; const t = (intro.k - (ring - 1) * .1) / .42; return t <= 0 ? 0 : t >= 1 ? 1 : easeOut(t); };
+  const vx0 = view.x0, k = TAU / Math.max(1e-12, view.x1 - view.x0), vd = view.d;
+  const dimOthers = !!(hover && !hover.agg);
+  const labels = [];
+
+
+  const rec = (n, hue, hl, idx, sel) => {
+    const a0 = (px0(n) - vx0) * k, a1 = (px1(n) - vx0) * k;
+    if (a1 <= 0 || a0 >= sweep || a1 - a0 <= 0) return;
+    const ring = n.depth - vd;
+    if (ring > RINGS + .001) return;
+    hue = hueAt((Math.max(0, a0) + Math.min(sweep, a1)) / 2 / TAU);
+    if (n === hover) hl = true;
+    if (evalHL && !sel && evalHL.has(n)) sel = true;
+    const alpha = (dimOthers && !hl ? .35 : 1) * (evalHL && !sel ? .2 : 1);
+    const g = grow(ring);
+    if (ring > 0 && g <= 0) return;
+    if (ring > 0) {
+      const r0 = R0 + Math.max(0, ring - 1) * RW + GAP, r1 = r0 + (R0 + ring * RW - r0) * g;
+      if (r1 - r0 > .5) {
+        let b0 = Math.max(0, a0), b1 = Math.min(sweep, a1);
+        const pad = Math.min(.8 / r0, (b1 - b0) * .2);
+        const [h, s, l] = arcHSL(n, hue, ring, idx);
+        shape(r0, r1, b0 + pad, b1 - pad);
+        const unswept = anal && (b0 + b1) / 2 / TAU > anal.k;
+        if (unswept) paintArc(MECH ? 214 : HUD ? 190 : 240, MECH ? 8 : HUD ? 10 : 4, MECH ? 86 - ring * .8 : HUD ? 40 : 21 + ring * .8 + (idx & 1), alpha * (HUD && !MECH ? .5 : 1), true);
+        else paintArc(h, s, l, alpha, !n.children);
+        ctx.fillStyle = unswept ? (MECH ? hsl(214, 8, 86) : hsl(240, 4, 21)) : hsl(h, s, l);
+        const hh = {n, a0: b0, a1: b1, r0, r1, fill: ctx.fillStyle};
+        hits.push(hh); if (n === selected) selHit = hh;
+        if (g >= 1 && r1 - r0 > 15 && (b1 - b0) * (r0 + r1) / 2 > 54) labels.push({n, b0, b1, r0, r1, l, alpha});
+      }
+    }
+    const ch = n.children;
+    if (!ch || ring >= RINGS) return;
+    for (let i = 0; i < ch.length; i++) {
+      const c = ch[i];
+      const c0 = (px0(c) - vx0) * k, c1 = (px1(c) - vx0) * k;
+      if (c1 - c0 < MIN_A) {               // tail of small items → one quiet aggregate arc
+        const cr = ring + 1, g0 = Math.max(0, c0), g1 = Math.min(sweep, a1);
+        const gg = grow(cr);
+        if (cr > 0 && cr <= RINGS && g1 - g0 > .0008 && gg > 0) {
+          const r0 = R0 + Math.max(0, cr - 1) * RW + GAP, r1 = r0 + (R0 + cr * RW - r0) * gg;
+          const pad = Math.min(.8 / r0, (g1 - g0) * .2);
+          shape(r0, r1, g0 + pad, g1 - pad);
+          ctx.globalAlpha = alpha; ctx.fillStyle = TP.agg; ctx.fill();
+          if (HUD) { ctx.lineWidth = .6; ctx.strokeStyle = MECH ? 'rgba(20,32,64,.25)' : 'rgba(127,231,242,.18)'; ctx.stroke(); }
+          let s = 0; for (let j = i; j < ch.length; j++) s += ch[j].size;
+          hits.push({agg: true, parent: n, count: ch.length - i, size: s, a0: g0, a1: g1, r0, r1});
+        }
+        break;
+      }
+      rec(c, hue, hl, i, sel);
+    }
+  };
+  rec(root, null, false, 0, false);
+  ctx.globalAlpha = 1;
+  if (HUD) { if (!MECH) glowPass(); hudRings(); }
+
+  drawLabels(labels);
+
+  if (selHit) {
+    const pad = Math.min(.8 / selHit.r0, (selHit.a1 - selHit.a0) * .2);
+    shape(selHit.r0, selHit.r1, selHit.a0 + pad, selHit.a1 - pad);
+    ctx.lineWidth = 1.5; ctx.strokeStyle = TP.fg; ctx.stroke();
+  }
+  const swA = radar ? A0 + radar.k * TAU * 1.5 : anal && anal.k < 1 ? A0 + anal.k * TAU : null;
+  if (swA !== null && ctx.createConicGradient) {
+    const ang = swA;
+    const g = ctx.createConicGradient(ang - 1, CX, CY);
+    g.addColorStop(0, TP.ink + '0)'); g.addColorStop(.158, TP.ink + '.14)'); g.addColorStop(.159, TP.ink + '0)');
+    ctx.beginPath(); ctx.arc(CX, CY, RAD + 8, 0, TAU); ctx.arc(CX, CY, R0, TAU, 0, true); ctx.fillStyle = g; ctx.fill();
+  }
+
+  // center: plain text; when drilled in, concentric rings show how deep you are and act as the "up" button
+  ctx.globalAlpha = intro ? Math.min(1, intro.k * 3) : 1;
+  if (focus.parent) {
+    const dep = Math.min(focus.depth, 5);
+    if (centerHot) { ctx.beginPath(); ctx.arc(CX, CY, R0 - 2, 0, TAU); ctx.fillStyle = TP.ink + '.035)'; ctx.fill(); }
+    ctx.lineWidth = 2;
+    for (let i = 0; i < dep; i++) {
+      ctx.beginPath(); ctx.arc(CX, CY, R0 - 5 - i * 4.5, 0, TAU);
+      ctx.strokeStyle = `${TP.ink}${(centerHot && !i ? .55 : .17) - i * .03})`; ctx.stroke();
+    }
+  }
+  const info = hover && !hover.agg && hover !== 'center' ? hover : focus;
+  const isFocus = info === focus;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = TP.dim; ctx.font = `400 ${Math.round(Math.max(11, R0 * .11))}px ${FONT}`;
+  ctx.fillText(clip(info.name, R0 * 1.5), CX, CY - R0 * .28);
+  ctx.fillStyle = TP.fg; ctx.font = `600 ${Math.round(Math.max(18, R0 * .25))}px ${FONT}`;
+  ctx.fillText(fmt(info.size), CX, CY + R0 * .02);
+  ctx.font = `400 ${Math.round(Math.max(10, R0 * .1))}px ${FONT}`;
+  let sub;
+  if (isFocus && centerHot && focus.parent) { ctx.fillStyle = TP.fg; sub = '↑ 返回 ' + clip(focus.parent.name, R0 * 1.2); }
+  else { ctx.fillStyle = TP.dim; sub = info.children ? `${num(info.cnt - 1)} 个项目` : CATS[catOf(info)].l; if (!isFocus && info.parent && info.parent.size) sub += ` · ${(100 * info.size / focus.size).toFixed(1)}%`; }
+  ctx.fillText(sub, CX, CY + R0 * .28);
+  ctx.globalAlpha = 1;
+
+  const dt = performance.now() - t0;
+  $('#sDraw').textContent = dt.toFixed(1) + ' ms';
+  $('#sArcs').textContent = num(hits.length);
+}
+/* =========================================================================
+   Trash view of the sunburst — where the bin's contents came from.
+   Trash items are re-rooted into a virtual tree by original path; single-child folder chains collapse ("Users/me/Library").
+   Folders keep the calm ramp, items carry their safety colour (same as their ball and row dot).
+   ========================================================================= */
+let tsun = null;
+function buildTrashSun() {
+  const vr = {name: P.trash, size: 0, children: [], m: new Map(), cnt: 0}, byIt = new Map();
+  for (const it of trash.items) {
+    const chain = []; for (let a = it.n; a && a.parent; a = a.parent) chain.push(a); chain.reverse();
+    let cur = vr; cur.size += it.n.size; cur.cnt++;
+    chain.forEach((a, i) => {
+      const leaf = i === chain.length - 1;
+      let c = cur.m.get(a.id);
+      if (!c) { c = {name: a.name, size: 0, cnt: 0, children: leaf ? null : [], m: new Map(), parent: cur, src: a}; cur.m.set(a.id, c); cur.children.push(c); }
+      if (leaf) { c.it = it; byIt.set(it, c); }
+      c.size += it.n.size; c.cnt++; cur = c;
+    });
+  }
+  let depth = 0;
+  const fix = (n, d, x0, x1) => {
+    while (n.children && !n.it && n.children.length === 1 && n.children[0].children && !n.children[0].it) {
+      const c = n.children[0]; if (n === vr) vr.pre = (vr.pre ? vr.pre + '/' : '') + c.name; else n.name += '/' + c.name;
+      if (n !== vr) n.src = c.src;
+      n.children = c.children; n.children.forEach(k => k.parent = n);
+    }
+    n.d = d; n.x0 = x0; n.x1 = x1; depth = Math.max(depth, d);
+    if (!n.children) return;
+    n.children.sort((a, b) => b.size - a.size);
+    let x = x0; const k = (x1 - x0) / (n.size || 1);
+    for (const c of n.children) { fix(c, d + 1, x, x + c.size * k); x += c.size * k; }
+  };
+  fix(vr, 0, 0, 1);
+  return {root: vr, depth: Math.min(5, depth), byIt, hits: [], hl: null, k: 1, t0: 0};
+}
+/* ---- arc tween: one sunburst morphs into another ----
+   Arcs are matched by the real node they stand for. Matched arcs interpolate angle, radius and colour.
+   Unmatched arcs ride along inside their nearest matched ancestor (angles remapped into it) while growing/retracting radially. */
+let xfade = null, lblT = 0;
+const diskKeys = h => { const out = []; for (let a = h.agg ? h.parent : h.n.parent; a; a = a.parent) out.push(a.id); return out; };
+const trashKeys = h => { const out = []; for (let a = h.v.parent; a; a = a.parent) if (a.src) out.push(a.src.id); return out; };
+function rgbOf(f) {
+  if (typeof f !== 'string') return [255, 255, 255, .05];
+  if (f[0] === '#') return [parseInt(f.slice(1, 3), 16), parseInt(f.slice(3, 5), 16), parseInt(f.slice(5, 7), 16), 1];
+  const m = f.match(/[\d.]+/g) || [255, 255, 255, .05]; return [+m[0], +m[1], +m[2], m[3] === undefined ? 1 : +m[3]];
+}
+function snapDisk() { return hits.map(h => ({key: h.agg ? null : h.n.id, pk: diskKeys(h), a0: h.a0, a1: h.a1, r0: h.r0 / RAD, r1: h.r1 / RAD, c: rgbOf(h.agg ? TP.agg : h.fill)})); }
+function snapTrash() { return tsun.hits.map(h => ({key: h.v.src ? h.v.src.id : null, pk: trashKeys(h), a0: h.a0, a1: h.a1, r0: h.r0 / RAD, r1: h.r1 / RAD, c: rgbOf(h.fill)})); }
+const centerDisk = () => [focus.name, fmt(focus.size), `${num(focus.cnt - 1)} 个项目`];
+const centerTrash = () => tsun && tsun.root.cnt ? [P.trash, fmt(tsun.root.size), `${num(tsun.root.cnt)} 项`] : [P.trash, '空', '0 项'];
+function startXfade(A, B, ca, cb, dur = 640) {
+  const mb = new Map(); for (const b of B) if (b.key != null && !mb.has(b.key)) mb.set(b.key, b);
+  const match = new Map(), used = new Set(), outs = [], mids = [], ins = [];
+  for (const a of A) { const b = a.key != null && mb.get(a.key); if (b && !used.has(b)) { used.add(b); match.set(a.key, {a, b}); mids.push({a, b}); } else outs.push(a); }
+  const remap = (e, from, to) => { const k = (to.a1 - to.a0) / ((from.a1 - from.a0) || 1e-9); return {a0: to.a0 + (e.a0 - from.a0) * k, a1: to.a0 + (e.a1 - from.a0) * k}; };
+  const ghost = (e, side) => {          // where an unmatched arc comes from / goes to
+    for (const k of e.pk) { const m = match.get(k); if (m) { const g = side === 'out' ? remap(e, m.a, m.b) : remap(e, m.b, m.a); return {...e, ...g, r1: e.r0, c: [...e.c.slice(0, 3), 0]}; } }
+    return {...e, r1: e.r0, c: [...e.c.slice(0, 3), 0]};
+  };
+  const pairs = [...outs.map(a => ({a, b: ghost(a, 'out'), o: 1})), ...mids, ...B.filter(b => !used.has(b)).map(b => ({a: ghost(b, 'in'), b, o: 2}))];
+  xfade = {t0: performance.now(), dur, pairs, ca, cb}; tip.style.display = 'none'; dirty = true;
+}
+function drawXfade(now) {
+  const X = xfade, t = ease(Math.min(1, Math.max(0, (now - X.t0) / X.dur)));
+  for (const {a, b, o} of X.pairs) {
+    const r0 = lerp(a.r0, b.r0, t) * RAD, r1 = lerp(a.r1, b.r1, t) * RAD, a0 = lerp(a.a0, b.a0, t), a1 = lerp(a.a1, b.a1, t);
+    // leavers clear out early, arrivals settle in late — the matched skeleton carries the motion
+    const al = o === 1 ? a.c[3] * (1 - Math.min(1, t * 1.7)) : o === 2 ? b.c[3] * Math.max(0, (t - .3) / .7) : lerp(a.c[3], b.c[3], t);
+    if (r1 - r0 < .4 || a1 - a0 < .0006 || al < .01) continue;
+    const pad = Math.min(.8 / Math.max(1, r0), (a1 - a0) * .2);
+    shape(r0, r1, a0 + pad, a1 - pad);
+    paintRGB([lerp(a.c[0], b.c[0], t) | 0, lerp(a.c[1], b.c[1], t) | 0, lerp(a.c[2], b.c[2], t) | 0], al);
+  }
+  ctx.globalAlpha = 1;
+  if (HUD && !MECH) glowPass();
+  // centre text crossfades in place
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const txt = (c, al) => {
+    if (al <= 0) return; ctx.globalAlpha = al;
+    ctx.fillStyle = TP.dim; ctx.font = `400 ${Math.round(Math.max(11, R0 * .11))}px ${FONT}`; ctx.fillText(clip(c[0], R0 * 1.5), CX, CY - R0 * .28);
+    ctx.fillStyle = TP.fg; ctx.font = `600 ${Math.round(Math.max(18, R0 * .25))}px ${FONT}`; ctx.fillText(c[1], CX, CY + R0 * .02);
+    ctx.fillStyle = TP.dim; ctx.font = `400 ${Math.round(Math.max(10, R0 * .1))}px ${FONT}`; ctx.fillText(c[2], CX, CY + R0 * .28);
+  };
+  if (X.ca[1] === X.cb[1] && X.ca[0] === X.cb[0]) txt(X.cb, 1); else { txt(X.ca, 1 - Math.min(1, t * 2)); txt(X.cb, Math.max(0, t * 2 - 1)); }
+  ctx.globalAlpha = 1;
+}
+function enterTrashSun() {
+  const A = snapDisk(), ca = centerDisk();
+  tsun = buildTrashSun(); drawTrashSun();           // lay out the target once (overdrawn this frame)
+  startXfade(A, snapTrash(), ca, centerTrash());
+  renderTvLegend();
+}
+function leaveTrashSun(instant) {
+  if (!tsun) return;
+  tip.style.display = 'none';
+  if (instant) { tsun = null; xfade = null; dirty = true; return; }
+  const A = snapTrash(), ca = centerTrash();
+  tsun = null; intro = null; draw(performance.now());    // lay out the disk view at its resting state
+  startXfade(A, snapDisk(), ca, centerDisk());
+}
+function refreshTrashSun() {
+  if (!tsun) return;
+  const A = snapTrash(), ca = centerTrash(), hl = tsun.hl;
+  tsun = buildTrashSun(); drawTrashSun();
+  startXfade(A, snapTrash(), ca, centerTrash(), 480);
+  renderTvLegend();
+}
+function tsunHL(it) { if (!tsun) return; const v = it ? tsun.byIt.get(it) || null : null; if (v !== tsun.hl) { tsun.hl = v; dirty = true; } }
+const tsunHot = (n, hl) => { if (!hl) return true; for (let a = hl; a; a = a.parent) if (a === n) return true; for (let a = n; a; a = a.parent) if (a === hl) return true; return false; };
+function renderTvLegend() {
+  const n = trash.items.length, s = trashSize();
+  const pre = tsun && tsun.root.pre ? ` · 都在 ${P.rootPath}${tsun.root.pre.split('/').join(P.sep)} 下` : '';
+  $('#tvT').innerHTML = `<b>${P.trash}里的内容来自哪里</b><span>${n ? `${num(n)} 项 · ${fmt(s)}${esc(pre)}` : '空'}</span>`;
+  if (!tsun) return;
+  const top = tsun.root.children.slice(0, 5);
+  $('#tvLg').innerHTML = top.map(c => { const [h, sa, l] = rampAt((c.x0 + c.x1) / 2); return `<div><i style="background:${hsl(h, sa * .4, l - 28)}"></i>${esc(c.name.split('/').pop())}<b>${fmt(c.size)}</b></div>`; }).join('')
+    + (tsun.root.children.length > 5 ? `<div style="color:var(--t4)">另有 ${tsun.root.children.length - 5} 个位置</div>` : '');
+}
+function drawTrashSun() {
+  const T = tsun, V = T.root, hl = T.hl;
+  T.hits = [];
+  const D = Math.max(3, T.depth), RWt = (RAD - R0) / D, labels = [];
+  const grow = ring => { const t = (T.k - (ring - 1) * .1) / .45; return t <= 0 ? 0 : t >= 1 ? 1 : easeOut(t); };
+  const rec = (n, idx) => {
+    const ring = n.d;
+    if (ring > D) return;
+    if (ring > 0) {
+      const g = grow(ring); if (g <= 0) return;
+      const a0 = n.x0 * TAU, a1 = n.x1 * TAU;
+      if (a1 - a0 < .004) return;
+      const r0 = R0 + (ring - 1) * RWt + GAP, r1 = r0 + (RWt - GAP) * g;
+      const pad = Math.min(.8 / r0, (a1 - a0) * .2);
+      let h, sa, l;
+      if (n.it) { [h, sa] = SAFE_H[n.it.lv]; l = 62 - ring * 2 + (idx & 1) * 2; if (n.it.lv === 'protected') l = 52; }
+      else { [h, sa, l] = rampAt((n.x0 + n.x1) / 2); sa *= .4; l = l - 30 + ring * 1.5 + (idx & 1) * 1.5; }
+      shape(r0, r1, a0 + pad, a1 - pad);
+      if (HUD && !n.it) [h, sa, l] = [hudRampAt((n.x0 + n.x1) / 2)[0], 40, 46 + ring * 2];
+      if (MECH && !n.it) [h, sa, l] = [214, 10, 78 - ring * 4 + (idx & 1) * 2];
+      paintArc(h, sa, l, tsunHot(n, hl) ? 1 : .22, !!n.it);
+      ctx.fillStyle = hsl(h, sa, l);
+      if (n === hl) { ctx.lineWidth = 1.5; ctx.strokeStyle = TP.fg; ctx.stroke(); }
+      T.hits.push({v: n, a0, a1, r0, r1, fill: ctx.fillStyle});
+      if (g >= 1 && r1 - r0 > 15 && (a1 - a0) * (r0 + r1) / 2 > 54) labels.push({n: {name: n.name.split('/').slice(-2).join('/'), size: n.size}, b0: a0, b1: a1, r0, r1, l, alpha: ctx.globalAlpha});
+    }
+    if (n.children) n.children.forEach((c, i) => rec(c, i));
+  };
+  rec(V, 0);
+  ctx.globalAlpha = 1;
+  if (HUD && !MECH) glowPass();
+  drawLabels(labels);
+  // centre: the bin's total; hovering the centre offers the way back
+  ctx.globalAlpha = Math.min(1, T.k * 3);
+  if (centerHot) { ctx.beginPath(); ctx.arc(CX, CY, R0 - 2, 0, TAU); ctx.fillStyle = TP.ink + '.035)'; ctx.fill(); }
+  const info = hl || V;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = TP.dim; ctx.font = `400 ${Math.round(Math.max(11, R0 * .11))}px ${FONT}`;
+  ctx.fillText(clip(info === V ? P.trash : info.name.split('/').pop(), R0 * 1.5), CX, CY - R0 * .28);
+  ctx.fillStyle = TP.fg; ctx.font = `600 ${Math.round(Math.max(18, R0 * .25))}px ${FONT}`;
+  ctx.fillText(V.cnt ? fmt(info.size) : '空', CX, CY + R0 * .02);
+  ctx.font = `400 ${Math.round(Math.max(10, R0 * .1))}px ${FONT}`;
+  ctx.fillStyle = centerHot ? TP.fg : TP.dim;
+  ctx.fillText(centerHot ? '← 返回磁盘' : info.it ? LV[info.it.lv].l : `${num(info.cnt)} 项`, CX, CY + R0 * .28);
+  ctx.globalAlpha = 1;
+}
+function trashHit(x, y) {
+  const dx = x - CX, dy = y - CY, r = Math.hypot(dx, dy);
+  if (r < R0 - 3) return 'center';
+  let a = Math.atan2(dy, dx) - A0; while (a < 0) a += TAU; while (a >= TAU) a -= TAU;
+  for (let i = tsun.hits.length - 1; i >= 0; i--) { const h = tsun.hits[i]; if (r >= h.r0 - 1 && r < h.r1 && a >= h.a0 && a < h.a1) return h; }
+  return null;
+}
+function trashRowsFor(v) { const out = []; const walk = n => { if (n.it) out.push(trash.items.indexOf(n.it)); if (n.children) n.children.forEach(walk); }; walk(v); return out; }
+function trashMove(e) {
+  const r = cv.getBoundingClientRect(), h = trashHit(e.clientX - r.left, e.clientY - r.top);
+  const hot = h === 'center'; if (hot !== centerHot) { centerHot = hot; dirty = true; }
+  cv.style.cursor = h ? 'pointer' : 'default';
+  const v = h && h !== 'center' ? h.v : null;
+  if (v !== tsun.hl) { tsun.hl = v; dirty = true; }
+  const list = $('#tsList');
+  list.querySelectorAll('.tr.hl').forEach(x => x.classList.remove('hl'));
+  ballHL(-1);
+  if (v) {
+    const ks = trashRowsFor(v);
+    ks.forEach(k => { const row = list.querySelector(`.tr[data-k="${k}"]`); if (row) row.classList.add('hl'); });
+    if (v.it) ballHL(ks[0]);
+    tip.innerHTML = `<div class="tn">${esc(v.name)}</div><div class="ts">${fmt(v.size)} · ${v.it ? LV[v.it.lv].l : num(v.cnt) + ' 项'}</div>`;
+    tip.style.display = 'block';
+    tip.style.left = Math.min(innerWidth - tip.offsetWidth - 8, e.clientX + 14) + 'px';
+    tip.style.top = Math.min(innerHeight - tip.offsetHeight - 8, e.clientY + 14) + 'px';
+  } else tip.style.display = 'none';
+}
+function trashClick(e) {
+  const r = cv.getBoundingClientRect(), h = trashHit(e.clientX - r.left, e.clientY - r.top);
+  if (h === 'center') { closeScene(); return; }
+  if (!h) return;
+  const ks = trashRowsFor(h.v), row = $('#tsList').querySelector(`.tr[data-k="${ks[0]}"]`);
+  if (row) row.scrollIntoView({block: 'center', behavior: 'smooth'});
+}
+/** Labels set along the arc itself: glyphs follow the curve; lower half is flipped so text never reads upside down. */
+function arcText(str, r, am, flip) {
+  let w = 0; const ws = [];
+  for (const ch of str) { const cw = ctx.measureText(ch).width; ws.push([ch, cw]); w += cw; }
+  let acc = -w / 2;
+  for (const [ch, cw] of ws) {
+    const a = am + (flip ? -1 : 1) * (acc + cw / 2) / r;
+    ctx.save();
+    ctx.translate(CX + Math.cos(a) * r, CY + Math.sin(a) * r);
+    ctx.rotate(flip ? a - Math.PI / 2 : a + Math.PI / 2);
+    ctx.fillText(ch, 0, 0);
+    ctx.restore();
+    acc += cw;
+  }
+}
+function drawLabels(L) {
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const lf = Math.min(1, (performance.now() - lblT) / 240);
+  for (const o of L) {
+    const am = A0 + (o.b0 + o.b1) / 2, rm = (o.r0 + o.r1) / 2;
+    const flip = Math.sin(am) > 0.05;                  // lower half reads left→right when flipped
+    const two = o.r1 - o.r0 >= 30, up = flip ? -1 : 1; // "up" in glyph space points outward on top, inward on bottom
+    const rN = two ? rm + up * 6 : rm, rS = rm - up * 7;
+    const maxW = (o.b1 - o.b0) * Math.min(rN, rm) - 14;
+    if (maxW < 34) continue;
+    ctx.font = `500 11px ${FONT}`;
+    const name = clip(o.n.name, maxW);
+    if (name.length < 3) continue;
+    const dark = (!HUD || MECH) && o.l >= 52, holo = HUD && !MECH;
+    ctx.globalAlpha = o.alpha * lf;
+    ctx.fillStyle = dark ? 'rgba(15,15,18,.82)' : holo ? 'rgba(225,252,250,.92)' : 'rgba(255,255,255,.92)';
+    arcText(name, rN, am, flip);
+    if (two) {
+      ctx.font = HUD ? `400 9.5px ${MONO}` : `400 10px ${FONT}`;
+      ctx.fillStyle = dark ? 'rgba(15,15,18,.52)' : holo ? 'rgba(160,240,236,.7)' : 'rgba(255,255,255,.6)';
+      arcText(fmt(o.n.size), rS, am, flip);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+function clip(s, maxW) {
+  if (ctx.measureText(s).width <= maxW) return s;
+  while (s.length > 2 && ctx.measureText(s + '…').width > maxW) s = s.slice(0, -1);
+  return s + '…';
+}
+
+/* =========================================================================
+   HUD overlay — instruments drawn on their own canvas so the sunburst itself only redraws when it changes.
+   bezel ticks + bearings, counter-rotating dashed rings, centre reticle, target callout for the hovered arc,
+   lock-on brackets while auto-clean analyses, completion pulse. Throttled to ~30 fps.
+   ========================================================================= */
+const hcv = $('#hud'), hctx = hcv.getContext('2d');
+let hudLast = 0, pulse = null;
+function hudSize() { hcv.width = cv.width; hcv.height = cv.height; }
+function polar(r, a) { return [CX + Math.cos(a) * r, CY + Math.sin(a) * r]; }
+function hudFrame(now) {
+  if (!HUD || !root) return;
+  if (now - hudLast < 32) return; hudLast = now;
+  if (hcv.width !== cv.width || hcv.height !== cv.height) hudSize();
+  const c = hctx; c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(0, 0, WW, HH);
+  const T = now / 1000, C1 = MECH ? 'rgba(22,34,68,' : 'rgba(127,231,242,', AMB = MECH ? 'rgba(214,38,46,' : 'rgba(255,186,92,';
+  const Rb = RAD + 12;
+  if (MECH) {
+    // caution band: a yellow/ink striped segment riding the bezel, plus cobalt + red armour stripes
+    if (!tsun) {   // the trash view keeps its location legend in that corner
+      c.lineWidth = 6; c.strokeStyle = '#f2b705'; c.beginPath(); c.arc(CX, CY, Rb + 46, A0 + TAU * .62, A0 + TAU * .74); c.stroke();
+      c.setLineDash([5, 5]); c.strokeStyle = 'rgba(20,26,42,.85)'; c.beginPath(); c.arc(CX, CY, Rb + 46, A0 + TAU * .62, A0 + TAU * .74); c.stroke(); c.setLineDash([]);
+    }
+    c.lineWidth = 3; c.strokeStyle = '#1f4fa8'; c.beginPath(); c.arc(CX, CY, Rb + 46, A0 + TAU * .06, A0 + TAU * .2); c.stroke();
+    c.strokeStyle = '#d7262e'; c.beginPath(); c.arc(CX, CY, Rb + 46, A0 + TAU * .205, A0 + TAU * .235); c.stroke();
+    // registration marks in the four corners
+    c.lineWidth = 1; c.strokeStyle = C1 + '.35)'; c.beginPath();
+    for (const [x, y, sx, sy] of [[14, 14, 1, 1], [WW - 14, 14, -1, 1], [14, HH - 30, 1, -1], [WW - 14, HH - 30, -1, -1]]) { c.moveTo(x, y + sy * 14); c.lineTo(x, y); c.lineTo(x + sx * 14, y); }
+    c.stroke();
+    c.font = `600 9px ${MONO}`; c.fillStyle = C1 + '.5)'; c.textAlign = 'right'; c.textBaseline = 'top';
+    c.fillText('UNIT·DISK  /  ARMOR MAP', WW - 22, 20);
+  }
+  // bezel: 180 ticks, every 10th long; bearings
+  c.lineWidth = 1; c.strokeStyle = C1 + '.22)'; c.beginPath();
+  for (let i = 0; i < 180; i++) { const a = A0 + i / 180 * TAU, L = i % 15 === 0 ? 9 : i % 5 === 0 ? 5 : 2.5; const [x0, y0] = polar(Rb, a), [x1, y1] = polar(Rb + L, a); c.moveTo(x0, y0); c.lineTo(x1, y1); }
+  c.stroke();
+  c.font = `9.5px ${MONO}`; c.fillStyle = C1 + '.45)'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  for (let i = 0; i < 4; i++) { const [x, y] = polar(Rb + 20, A0 + i * TAU / 4); c.fillText(String(i * 90).padStart(3, '0'), x, y); }
+  // counter-rotating dashed rings
+  c.setLineDash([2, 6]); c.strokeStyle = C1 + '.3)'; c.beginPath(); c.arc(CX, CY, Rb + 32, T * .12, T * .12 + TAU * .62); c.stroke();
+  c.setLineDash([18, 5, 2, 5]); c.strokeStyle = C1 + '.18)'; c.beginPath(); c.arc(CX, CY, Rb + 38, -T * .07, -T * .07 + TAU * .35); c.stroke();
+  c.setLineDash([]);
+  c.lineWidth = 2; c.strokeStyle = C1 + '.55)'; c.beginPath(); c.arc(CX, CY, Rb + 32, T * .12 + TAU * .62, T * .12 + TAU * .62 + .06); c.stroke();
+  // centre reticle
+  c.lineWidth = 1; c.strokeStyle = C1 + '.28)';
+  c.beginPath(); c.arc(CX, CY, R0 - 6, -T * .2, -T * .2 + TAU * .8); c.stroke();
+  c.beginPath();
+  for (let i = 0; i < 4; i++) { const a = i * TAU / 4 + T * .2; const [x0, y0] = polar(R0 - 14, a), [x1, y1] = polar(R0 - 9, a); c.moveTo(x0, y0); c.lineTo(x1, y1); }
+  c.stroke();
+  // auto-clean: sweep edge + lock-on brackets on the biggest swept candidates
+  if (anal) {
+    const a = A0 + anal.k * TAU, [x0, y0] = polar(R0, a), [x1, y1] = polar(Rb + 40, a);
+    const g = c.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, C1 + '0)'); g.addColorStop(1, C1 + '.9)');
+    c.lineWidth = 1.5; c.strokeStyle = g; c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+    if (anal.locks) {
+      const byN = new Map(); for (const h of hits) if (h.n) byN.set(h.n, h);
+      let shown = 0; const tags = [];
+      for (const x of anal.locks) {
+        const h = byN.get(x.n); if (!h) continue;
+        const m = (h.a0 + h.a1) / 2; if (m / TAU > anal.k) continue;
+        const age = Math.min(1, (anal.k - m / TAU) * 8), [px, py] = polar((h.r0 + h.r1) / 2, A0 + m), s = 9 - age * 3;
+        c.strokeStyle = (shown < 6 ? AMB : C1) + (0.95 - age * .35) + ')'; c.lineWidth = 1.2; c.beginPath();
+        for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { c.moveTo(px + sx * s, py + sy * (s - 4)); c.lineTo(px + sx * s, py + sy * s); c.lineTo(px + sx * (s - 4), py + sy * s); }
+        c.stroke();
+        if (shown < 6 && age > .2 && tags.every(([qx, qy]) => Math.abs(qx - px) > 70 || Math.abs(qy - py) > 16)) { tags.push([px, py]); c.font = `9.5px ${MONO}`; c.textAlign = 'left'; c.fillStyle = AMB + '.85)'; c.fillText(fmt(x.n.size), px + s + 4, py - s); }
+        shown++;
+      }
+    }
+  }
+  if (pulse) {
+    const k = (now - pulse.t0) / 700;
+    if (k >= 1) pulse = null;
+    else { c.lineWidth = 2 - k * 1.5; c.strokeStyle = C1 + (0.7 * (1 - k)) + ')'; c.beginPath(); c.arc(CX, CY, R0 + (Rb + 40 - R0) * easeOut(k), 0, TAU); c.stroke(); }
+  }
+  // target callout for the hovered arc (replaces the tooltip in HUD)
+  let tgt = null;
+  if (tsun && tsun.hl) { const h = tsun.hits.find(x => x.v === tsun.hl); if (h) tgt = {h, name: tsun.hl.name.split('/').pop(), size: tsun.hl.size, sub: tsun.hl.it ? LV[tsun.hl.it.lv].l : num(tsun.hl.cnt) + ' 项', base: tsun.root.size}; }
+  else if (!tsun && !xfade && hover && !hover.agg && hover !== 'center') { const h = hits.find(x => x.n === hover); if (h) tgt = {h, name: hover.name, size: hover.size, sub: hover.children ? num(hover.cnt - 1) + ' 项' : CATS[catOf(hover)].l, base: hover.parent ? hover.parent.size : hover.size}; }
+  else if (!tsun && !xfade && hover && hover.agg) { const h = hover; tgt = {h, name: `${num(h.count)} 个较小项目`, size: h.size, sub: '聚合', base: h.parent.size}; }
+  if (tgt) {
+    // leader: radial leg out of the arc, one soft elbow, then a horizontal shelf on the SAME side the leg points to —
+    // the turn is always ≥ 90°, never folds back into an acute zig-zag. Short of room, the shelf runs to the edge
+    // and the text sits on it right-aligned instead of flipping sides.
+    const h = tgt.h, m = A0 + (h.a0 + h.a1) / 2, sg = Math.cos(m) >= 0 ? 1 : -1;
+    const [ax, ay] = polar(h.r1 + 2, m);
+    let [bx, by] = polar(Rb + 24, m);
+    by = Math.max(26, Math.min(HH - 34, by));
+    c.font = `500 12px ${FONT}`;
+    const name = tgt.name.length > 34 ? tgt.name.slice(0, 33) + '…' : tgt.name;
+    c.font = `10px ${MONO}`; const sub = `${fmt(tgt.size)} · ${(100 * tgt.size / (tgt.base || 1)).toFixed(1)}% · ${tgt.sub}`;
+    const tw = Math.max(c.measureText(sub).width, (c.font = `500 12px ${FONT}`, c.measureText(name).width));
+    const lim = sg > 0 ? WW - 12 : 12;
+    let ex = bx + sg * 56, tx = ex + sg * 8, align = sg > 0 ? 'left' : 'right';
+    if (sg * (tx + sg * tw - lim) > 0) { ex = lim; tx = lim; align = sg > 0 ? 'right' : 'left'; }
+    if (sg * (ex - bx) < 18) ex = bx + sg * 18;
+    c.strokeStyle = AMB + '.9)'; c.lineWidth = 1; c.lineJoin = 'round';
+    c.beginPath(); c.moveTo(ax, ay); c.arcTo(bx, by, ex, by, Math.min(10, Math.hypot(bx - ax, by - ay) * .5)); c.lineTo(ex, by); c.stroke();
+    c.fillStyle = AMB + '1)'; c.beginPath(); c.arc(ax, ay, 2.2, 0, TAU); c.fill();
+    c.fillRect(ex - (sg > 0 ? 3 : 0), by - 1.5, 3, 3);
+    c.textAlign = align; c.textBaseline = 'alphabetic';
+    c.font = `${MECH ? 600 : 500} 12px ${FONT}`; c.fillStyle = MECH ? '#141a26' : '#ffe6c4'; c.fillText(name, tx, by - 5);
+    c.font = `10px ${MONO}`; c.fillStyle = AMB + '.85)'; c.fillText(sub, tx, by + 13);
+  }
+  // corner readouts
+  c.font = `9.5px ${MONO}`; c.fillStyle = C1 + '.38)'; c.textBaseline = 'alphabetic';
+  c.textAlign = 'right'; c.fillText(`SECTORS ${num(tsun ? tsun.hits.length : hits.length)}  ·  DEPTH ${tsun ? tsun.depth : Math.round(view.d) + '+' + RINGS}`, WW - 16, HH - 12);
+  c.textAlign = 'left'; c.fillText(tsun ? 'MODE  TRASH-ORIGIN' : anal ? `MODE  ANALYSE  ${String(Math.round(anal.k * 100)).padStart(3, '0')}%` : `MODE  ${colorMode === 'safety' ? 'SAFETY' : 'STRUCTURE'}`, 16, HH - 12);
+}
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!root) return;
+  let anim = false;
+  MT = 1;
+  if (morph) { const t = (now - morph.t0) / morph.dur; if (t >= 1) morph = null; else { MT = ease(t); anim = true; } }
+  const fx0 = px0(focus), fx1 = px1(focus);
+  if (zoom) {
+    const z = zoom;
+    let t = (now - z.t0) / z.dur; if (t >= 1) { zoom = null; t = 1; } else anim = true;
+    t = ease(t);
+    view = {x0: lerp(z.x0, fx0, t), x1: lerp(z.x1, fx1, t), d: lerp(z.d, focus.depth, t)};
+  } else view = {x0: fx0, x1: fx1, d: focus.depth};
+  if (intro) { const t = (now - intro.t0) / intro.dur; if (t >= 1) intro = null; else { intro.k = t; anim = true; } }
+  if (xfade) { if (now - xfade.t0 >= xfade.dur) { xfade = null; lblT = now; dirty = true; } else anim = true; }
+  if (now - lblT < 240) anim = true;
+  if (tsun && tsun.t0) { const t = (now - tsun.t0) / 700; if (t >= 1) { tsun.k = 1; tsun.t0 = 0; dirty = true; } else { tsun.k = Math.max(0, t); anim = true; } }
+  if (radar) { const t = (now - radar.t0) / radar.dur; if (t >= 1) { radar = null; } else { radar.k = t; anim = true; } }
+  if (anim || dirty) { draw(now); dirty = false; }
+  hudFrame(now);
+}
+requestAnimationFrame(frame);
+
+function hitAt(x, y) {
+  const dx = x - CX, dy = y - CY, r = Math.hypot(dx, dy);
+  if (r < R0 - 3) return 'center';
+  let a = Math.atan2(dy, dx) - A0; while (a < 0) a += TAU; while (a >= TAU) a -= TAU;
+  for (let i = hits.length - 1; i >= 0; i--) { const h = hits[i]; if (r >= h.r0 - 1 && r < h.r1 && a >= h.a0 && a < h.a1) return h; }
+  return null;
+}
+function arcPoint(n) {
+  const rect = cv.getBoundingClientRect();
+  const c = {x: rect.left + CX, y: rect.top + CY};
+  let m = n; while (m && m.depth - view.d > RINGS) m = m.parent;
+  if (!m || m.depth - view.d < 1) return c;
+  const k = TAU / (view.x1 - view.x0);
+  const a0 = (px0(n) - view.x0) * k, a1 = (px1(n) - view.x0) * k;
+  if (a1 < 0 || a0 > TAU) return c;
+  const am = A0 + (Math.max(0, a0) + Math.min(TAU, a1)) / 2, r = R0 + (m.depth - view.d - .5) * RW;
+  return {x: rect.left + CX + Math.cos(am) * r, y: rect.top + CY + Math.sin(am) * r};
+}
+
+/* chart interaction */
+const tip = $('#tip');
+cv.addEventListener('mousemove', e => {
+  if (xfade) return;
+  if (tsun) { trashMove(e); return; }
+  const r = cv.getBoundingClientRect(), h = hitAt(e.clientX - r.left, e.clientY - r.top);
+  let nh = null;
+  const hot = h === 'center'; if (hot !== centerHot) { centerHot = hot; dirty = true; }
+  if (h === 'center') { cv.style.cursor = focus.parent ? 'pointer' : 'default'; tip.style.display = 'none'; }
+  else if (h) {
+    cv.style.cursor = h.agg ? 'default' : 'pointer';
+    nh = h.agg ? h : h.n;
+    const n = h.agg ? null : h.n, par = h.agg ? h.parent : n.parent;
+    const pct = par && par.size ? (100 * (h.agg ? h.size : n.size) / par.size).toFixed(1) + '%' : '';
+    tip.innerHTML = h.agg
+      ? `<div class="tn">${num(h.count)} 个较小项目</div><div class="ts">${fmt(h.size)} · ${pct}</div>`
+      : `<div class="tn">${esc(n.name)}</div><div class="ts">${fmt(n.size)} · ${pct}${n.children ? ' · ' + num(n.cnt - 1) + ' 项' : ''} · <span style="color:${LV[verdict(n).level].c}">${LV[verdict(n).level].l}</span></div>`;
+    tip.style.display = 'block';
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    tip.style.left = Math.min(innerWidth - tw - 8, e.clientX + 14) + 'px';
+    tip.style.top = Math.min(innerHeight - th - 8, e.clientY + 14) + 'px';
+  } else { cv.style.cursor = 'default'; tip.style.display = 'none'; }
+  setHover(nh);
+});
+cv.addEventListener('mouseleave', () => { tip.style.display = 'none'; centerHot = false; dirty = true; if (tsun) { tsun.hl = null; ballHL(-1); $('#tsList').querySelectorAll('.tr.hl').forEach(x => x.classList.remove('hl')); } else setHover(null); });
+cv.addEventListener('click', e => {
+  if (tsun) { trashClick(e); return; }
+  if (scene === 'trash') return;
+  const r = cv.getBoundingClientRect(), h = hitAt(e.clientX - r.left, e.clientY - r.top);
+  if (h === 'center') { if (focus.parent) zoomTo(focus.parent); return; }
+  if (!h) return;
+  if (h.agg) { zoomTo(h.parent); return; }
+  if (h.n.children) zoomTo(h.n); else select(h.n, true);
+});
+
+function setHover(n) {
+  if (n === hover) return;
+  hover = n; dirty = true;
+  const old = rowsEl.querySelector('.row.hov'); if (old) old.classList.remove('hov');
+  if (n && !n.agg) { const el = rowsEl.querySelector(`[data-id="${n.id}"]`); if (el) el.classList.add('hov'); }
+}
+function zoomTo(n) {
+  if (!n) return;
+  if (!n.children) n = n.parent;
+  if (n === focus) { select(n); return; }
+  zoom = {x0: view.x0, x1: view.x1, d: view.d, t0: performance.now(), dur: 440};
+  focus = n; selected = n; hover = null; tip.style.display = 'none';
+  refreshNav();
+}
+function select(n, scrollIntoList) {
+  selected = n; dirty = true;
+  rowsEl.querySelectorAll('.row.sel').forEach(e => e.classList.remove('sel'));
+  const el = rowsEl.querySelector(`[data-id="${n.id}"]`); if (el) el.classList.add('sel');
+  if (scrollIntoList) { const i = rows.indexOf(n); if (i >= 0) { const top = i * ROWH; if (top < listEl.scrollTop || top > listEl.scrollTop + listEl.clientHeight - ROWH) listEl.scrollTop = top - listEl.clientHeight / 2; renderRows(); } }
+  renderDetail();
+}
+
+/* =========================================================================
+   Breadcrumbs / legend
+   ========================================================================= */
+function renderCrumbs() {
+  const up = $('#bUp'), had = !up.hidden;
+  up.hidden = !focus.parent;
+  if (focus.parent) { $('#bUpTxt').textContent = focus.parent.parent ? focus.parent.name : P.label === 'Windows' ? 'C:' : focus.parent.name; if (!had) { up.classList.remove('in'); void up.offsetWidth; up.classList.add('in'); } }
+  $('#lUp').hidden = !focus.parent;
+  const chain = []; for (let a = focus; a; a = a.parent) chain.push(a); chain.reverse();
+  $('#crumbs').innerHTML = chain.map((n, i) => `${i ? '<i>›</i>' : ''}<span data-i="${i}" class="${n === focus ? 'cur' : ''}">${esc(n.name)}</span>`).join('');
+  $('#crumbs').onclick = e => { const s = e.target.closest('span'); if (s) zoomTo(chain[+s.dataset.i]); };
+}
+function renderLegend() {
+  const lg = $('#legend');
+  if (colorMode !== 'safety') { lg.style.display = 'none'; return; }
+  const s = levelSums(focus, {safe: 0, review: 0, risky: 0, protected: 0});
+  lg.style.display = '';
+  lg.innerHTML = Object.keys(LV).map(k => `<div><i style="background:${LV[k].c}"></i>${LV[k].l}<b>${fmt(s[k])}</b></div>`).join('');
+}
+
+/* =========================================================================
+   Virtualized file list
+   ========================================================================= */
+const ROWH = 32;
+const listEl = $('#list'), spacer = $('#spacer');
+const rowsEl = spacer;
+let rows = [];
+let prevFocus = null, rowAnim = null, rowsVer = -1;
+function updateList() {
+  rows = focus.children ? focus.children.slice() : [];
+  if (sortMode === 'name') rows.sort((a, b) => a.name.localeCompare(b.name));
+  else if (sortMode === 'age') rows.sort((a, b) => a.age - b.age);
+  if (focus !== prevFocus) {
+    const dir = !prevFocus || prevFocus.depth === focus.depth ? 0 : focus.depth > prevFocus.depth ? 1 : -1;
+    rowAnim = {dx: dir * 18}; listEl.scrollTop = 0;
+    const lh = $('.lhead'); lh.classList.remove('fadeIn'); void lh.offsetWidth; lh.classList.add('fadeIn');
+  }
+  prevFocus = focus;
+  spacer.style.height = rows.length * ROWH + 8 + 'px';
+  $('#lTitle').textContent = focus.name;
+  $('#lCount').textContent = `${fmt(focus.size)} · ${num(rows.length)} 项`;
+  renderRows();
+}
+function renderRows() {
+  if (!rows.length) { spacer.innerHTML = '<div class="empty">此文件夹为空</div>'; rowAnim = null; return; }
+  const st = listEl.scrollTop, h = listEl.clientHeight || 400;
+  const i0 = Math.max(0, ((st / ROWH) | 0) - 6), i1 = Math.min(rows.length, (((st + h) / ROWH) | 0) + 8);
+  // remember where rows were, so structural changes (delete / restore / re-sort) can animate (FLIP)
+  const old = new Map(); for (const el of spacer.children) if (el.dataset.id) old.set(el.dataset.id, parseFloat(el.style.top));
+  const structural = rowsVer !== VER; rowsVer = VER;
+  let html = '', k = 0;
+  for (let i = i0; i < i1; i++) {
+    const n = rows[i], v = verdict(n), isDir = !!n.children;
+    const color = colorMode === 'safety' ? LV[v.level].c : dirColor(n);
+    const lock = v.level === 'protected';
+    const flag = v.level === 'safe' ? '<span class="fl safe">可清理</span>' : lock ? `<span class="fl" title="系统保护">${ICON_LOCK}</span>` : '';
+    const top = i * ROWH + 4;
+    const anim = rowAnim && top >= st - ROWH && top <= st + h ? ` in" style="--d:${Math.min(k++, 12) * 9}ms;--dx:${rowAnim.dx}px;top:${top}px` : `" style="top:${top}px`;
+    html += `<div class="row${n === selected ? ' sel' : ''}${n === hover ? ' hov' : ''}${anim}" data-i="${i}" data-id="${n.id}">
+      <i class="sw" style="background:${color}${isDir ? '' : ';border-radius:50%'}"></i>
+      <span class="nm ${isDir ? 'dir' : 'file'}">${esc(n.name)}</span>${flag}
+      <span class="sz">${fmt(n.size)}</span>
+      <button class="del${lock ? ' lock' : ''}" title="${lock ? '系统保护，禁止删除' : '移至' + P.trash + '（也可拖到废纸篓）'}">${lock ? '' : ICON_TRASH}</button>
+    </div>`;
+  }
+  spacer.innerHTML = html;
+  if (!rowAnim && structural && old.size) {
+    for (const el of spacer.children) {
+      const was = old.get(el.dataset.id), now = parseFloat(el.style.top);
+      if (was === undefined) el.animate([{opacity: 0, transform: 'scale(.98)'}, {opacity: 1, transform: 'none'}], {duration: 200, easing: 'ease-out'});
+      else if (was !== now) el.animate([{transform: `translateY(${was - now}px)`}, {transform: 'none'}], {duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)'});
+    }
+  }
+  rowAnim = null;
+}
+listEl.addEventListener('scroll', () => requestAnimationFrame(renderRows), {passive: true});
+let eatClick = false;
+spacer.addEventListener('click', e => {
+  if (eatClick) { eatClick = false; return; }
+  const row = e.target.closest('.row'); if (!row) return;
+  const n = rows[+row.dataset.i];
+  if (e.target.closest('.del')) { requestTrash(n, row); return; }
+  select(n);
+});
+spacer.addEventListener('dblclick', e => { const row = e.target.closest('.row'); if (!row) return; const n = rows[+row.dataset.i]; if (n.children) zoomTo(n); });
+spacer.addEventListener('mouseover', e => { const row = e.target.closest('.row'); if (row && !drag) setHover(rows[+row.dataset.i]); });
+spacer.addEventListener('mouseleave', () => setHover(null));
+
+/* drag a row onto the bin */
+let drag = null;
+spacer.addEventListener('pointerdown', e => {
+  if (e.button !== 0 || e.target.closest('.del')) return;
+  const row = e.target.closest('.row'); if (!row) return;
+  drag = {row, n: rows[+row.dataset.i], x0: e.clientX, y0: e.clientY, on: false};
+});
+const overBin = (x, y, pad) => { const b = binEl.getBoundingClientRect(); return x > b.left - pad && x < b.right + pad && y > b.top - pad - 20 && y < b.bottom + pad; };
+addEventListener('pointermove', e => {
+  if (!drag) return;
+  if (!drag.on) {
+    if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 6) return;
+    drag.on = true; drag.row.classList.add('drag'); setHover(null); tip.style.display = 'none';
+    const sw = drag.row.querySelector('.sw'), D = Math.max(14, Math.min(28, ballR(drag.n.size) * 3.4));
+    drag.color = sw.style.background; drag.D = D;
+    drag.ball = document.createElement('div'); drag.ball.className = 'ball';
+    Object.assign(drag.ball.style, {width: D + 'px', height: D + 'px', background: drag.color});
+    document.body.appendChild(drag.ball);
+    drag.ball.animate([{transform: `translate(${drag.x0 - D / 2}px,${drag.y0 - D / 2}px) scale(.3)`}, {transform: `translate(${drag.x0 - D / 2}px,${drag.y0 - D / 2}px) scale(1)`}], {duration: 140});
+    document.body.style.cursor = 'grabbing';
+  }
+  drag.x = e.clientX; drag.y = e.clientY;
+  drag.ball.style.transform = `translate(${e.clientX - drag.D / 2}px,${e.clientY - drag.D / 2}px)`;
+  const hot = overBin(e.clientX, e.clientY, 14);
+  binEl.classList.toggle('hot', hot);
+  binEl.classList.toggle('open', hot || overBin(e.clientX, e.clientY, 150) || trash.inflightN > 0);
+});
+addEventListener('pointerup', e => {
+  const d = drag; drag = null; if (!d || !d.on) return;
+  eatClick = true; setTimeout(() => eatClick = false, 0);
+  document.body.style.cursor = '';
+  const hot = binEl.classList.contains('hot');
+  binEl.classList.remove('hot'); if (!trash.inflightN) binEl.classList.remove('open');
+  const back = () => {
+    const r = d.row.isConnected ? d.row.getBoundingClientRect() : null;
+    const tx = r ? r.left + 16 : d.x, ty = r ? r.top + r.height / 2 : d.y;
+    d.ball.animate([{transform: `translate(${d.x - d.D / 2}px,${d.y - d.D / 2}px)`}, {transform: `translate(${tx - d.D / 2}px,${ty - d.D / 2}px) scale(.3)`, opacity: 0}], {duration: 200, easing: 'ease-in', fill: 'forwards'}).onfinish = () => d.ball.remove();
+    d.row.classList.remove('drag');
+  };
+  if (!hot) return back();
+  d.ball.remove();
+  if (requestTrash(d.n, {kind: 'pt', x: d.x, y: d.y, color: d.color}) === false) { d.row.classList.remove('drag'); return; }
+  setTimeout(() => d.row.isConnected && d.row.classList.remove('drag'), 50);
+});
+$('#lsort').onclick = e => { const b = e.target.closest('button'); if (!b) return; sortMode = b.dataset.s; segOn('#lsort', b); rowAnim = {dx: 0}; updateList(); };
+
+/* =========================================================================
+   Detail panel (meta + safety verdict + content preview)
+   ========================================================================= */
+const compCache = new Map();
+function composition(n) {
+  const key = n.id; const c = compCache.get(key);
+  if (c && c.ver === VER) return c;
+  const sums = {}; const top = [];
+  (function walk(x) {
+    if (x.children) { for (const ch of x.children) walk(ch); return; }
+    const k = catOf(x); sums[k] = (sums[k] || 0) + x.size;
+    if (top.length < 5 || x.size > top[top.length - 1].size) {
+      top.push(x); top.sort(bySize); if (top.length > 5) top.pop();
+    }
+  })(n);
+  const res = {ver: VER, sums, top};
+  compCache.set(key, res);
+  return res;
+}
+function renderDetail() {
+  const n = selected && attached(selected) ? selected : focus;
+  const v = verdict(n), isDir = !!n.children, cat = isDir ? null : CATS[catOf(n)];
+  const lv = LV[v.level], lock = v.level === 'protected';
+  const meta = [isDir ? `${num(n.cnt - 1)} 项` : cat.l, `修改于${ageStr(n.age)}`, `占磁盘 ${(100 * n.size / capacity).toFixed(1)}%`];
+  let h = `<div class="dname" title="${esc(n.name)}">${esc(n.name)}</div><div class="dpath" title="${esc(displayPath(n))}">${esc(displayPath(n))}</div>
+    <div class="dsize"><b>${fmt(n.size)}</b><span>${meta.join(' · ')}</span></div>
+    <div class="vline"><i style="background:${lv.c}"></i><div><b style="color:${lv.c}">${lv.t}</b> <span>${esc(v.reason)}${v === R_INST_OLD ? `，最后使用于${ageStr(n.age)}` : ''}</span></div></div>${(hb => hb ? `<div class="hline"><b>依据你的习惯</b> · 你曾手动删除 ${hb.d} 个 ${esc(hb.label)}，自动清理会包含此项</div>` : '')(habitOf(n))}
+    <details><summary>判断依据${v.tag ? ' · ' + esc(v.tag) : ''}</summary><ul class="why">${BULLETS[v.level].map(b => `<li>${b}</li>`).join('')}</ul></details>`;
+  let c = null;
+  if (isDir) {
+    c = composition(n); const tot = n.size || 1;
+    const ks = Object.keys(c.sums).sort((a, b) => c.sums[b] - c.sums[a]);
+    h += `<div class="comp" title="内容构成">${ks.map(k => `<i style="width:${100 * c.sums[k] / tot}%;background:${CATS[k].c}"></i>`).join('')}</div>
+      <details id="dComp"${detailOpen.comp ? ' open' : ''}><summary>构成与最大的文件</summary><div class="dl">
+        ${ks.slice(0, 6).map(k => `<div><i class="sw" style="background:${CATS[k].c};border-radius:50%"></i><span>${CATS[k].l}</span><b>${fmt(c.sums[k])}</b></div>`).join('')}
+        <div class="h">最大的文件</div>
+        ${c.top.map((f, i) => `<div data-t="${i}"><i class="sw" style="background:${CATS[catOf(f)].c};border-radius:50%"></i><span>${esc(f.name)}</span><b>${fmt(f.size)}</b></div>`).join('')}
+      </div></details>`;
+  } else {
+    h += `<details id="dPrev"${detailOpen.prev ? ' open' : ''}><summary>预览</summary>${preview(n)}</details>`;
+  }
+  h += `<div class="dact"><button class="btn" id="dReveal">${P.reveal}</button>${isDir && n !== focus ? `<button class="btn" id="dOpen">打开</button>` : ''}
+    <span class="sp" style="flex:1"></span><button class="btn solid" id="dDel" ${lock || !n.parent ? 'disabled' : ''}>${lock ? '受系统保护' : '移至' + P.trash}</button></div>`;
+  const d = $('#detail'); d.innerHTML = h;
+  for (const [id, k] of [['#dComp', 'comp'], ['#dPrev', 'prev']]) { const el = d.querySelector(id); if (el) el.ontoggle = () => detailOpen[k] = el.open; }
+  if (c) d.querySelector('.dl').onclick = e => { const x = e.target.closest('[data-t]'); if (!x) return; const f = c.top[+x.dataset.t]; zoomTo(f.parent); setTimeout(() => select(f, true), 0); };
+  $('#dReveal').onclick = () => toast(`${P.reveal}：${displayPath(n)}`);
+  if ($('#dOpen')) $('#dOpen').onclick = () => zoomTo(n);
+  $('#dDel').onclick = e => requestTrash(n, rowsEl.querySelector(`[data-id="${n.id}"]`) || e.currentTarget);
+}
+const detailOpen = {comp: false, prev: true};
+function preview(n) {
+  const cat = catOf(n), rr = mulberry32(n.id + 99), e = extOf(n.name);
+  const hue = (rr() * 360) | 0;
+  if (cat === 'image') {
+    const w = pickR(rr, [4032, 3024, 2880, 1920, 2560]), hh = Math.round(w * pickR(rr, [.75, .5625, .66]));
+    return `<div class="pv"><div class="img" style="background:radial-gradient(circle at ${20 + rr() * 60}% ${20 + rr() * 50}%,hsl(${hue},70%,70%),transparent 45%),linear-gradient(${(rr() * 180) | 0}deg,hsl(${hue + 40},55%,42%),hsl(${hue + 160},45%,18%))"><span>${w} × ${hh} · ${e.toUpperCase()}</span></div></div>`;
+  }
+  if (cat === 'video') {
+    const sec = Math.max(8, (n.size / (6 * MB)) | 0), mm = (sec / 60) | 0, ss = String(sec % 60).padStart(2, '0');
+    const film = Array.from({length: 12}, (_, i) => `<i style="background:hsl(${hue + i * 9},45%,${30 + rr() * 25}%)"></i>`).join('');
+    return `<div class="pv"><div class="vid">▶<div class="film">${film}</div><span>${mm}:${ss} · ${n.size > 2 * GB ? '4K HEVC' : '1080p H.264'}</span></div></div>`;
+  }
+  let lines;
+  if (cat === 'log') {
+    lines = Array.from({length: 9}, (_, i) => { const t = new Date(NOW - (n.age * 864e5) - (9 - i) * 7e4); return `${t.toISOString().slice(0, 19).replace('T', ' ')} ${pickR(rr, ['INFO ', 'WARN ', 'DEBUG', 'ERROR'])} ${pickR(rr, ['worker', 'net', 'scheduler', 'io', 'gc'])}: ${pickR(rr, ['request completed in 12ms', 'retrying connection (2/5)', 'cache miss for key 0x3fa9', 'flushed 128 entries', 'heap 412MB → 180MB'])}`; });
+  } else if (cat === 'code' && ['js', 'ts', 'tsx', 'mjs', 'cjs', 'go', 'rs', 'swift', 'py', 'json', 'css', 'html'].includes(e)) {
+    const S = {go: ['package main', '', 'import "fmt"', '', 'func walk(dir string) (int64, error) {', '\tvar total int64', '\tentries, err := os.ReadDir(dir)', '\tif err != nil { return 0, err }', '\t// ...'],
+      rs: ['use std::fs;', '', 'pub fn scan(path: &Path) -> io::Result<u64> {', '    let mut total = 0;', '    for e in fs::read_dir(path)? {', '        total += e?.metadata()?.len();', '    }', '    Ok(total)', '}'],
+      swift: ['import SwiftUI', '', 'struct ContentView: View {', '    @State var items: [Item] = []', '    var body: some View {', '        List(items) { Text($0.name) }', '    }', '}'],
+      json: ['{', '  "name": "' + (n.parent ? n.parent.name : 'pkg') + '",', '  "version": "4.' + ((rr() * 20) | 0) + '.1",', '  "main": "dist/index.js",', '  "license": "MIT",', '  "dependencies": {', '    "tslib": "^2.6.0"', '  }', '}']}[e]
+      || ['"use strict";', 'Object.defineProperty(exports, "__esModule", { value: true });', `exports.${pickR(rr, WORDS)} = void 0;`, `const ${pickR(rr, WORDS)} = require("./${pickR(rr, WORDS)}");`, `function ${pickR(rr, WORDS)}(opts) {`, '  if (!opts) throw new TypeError("opts required");', '  return Object.assign({}, defaults, opts);', '}', `//# sourceMappingURL=${n.name}.map`];
+    lines = S;
+  } else if (cat === 'archive') {
+    lines = [`${n.name}  ·  ${fmt(n.size)}`, '─'.repeat(38), ...Array.from({length: 6}, () => `${pickR(rr, ['Contents/', 'payload/', 'bin/', 'lib/', 'share/'])}${pickR(rr, WORDS)}.${pickR(rr, ['dylib', 'bin', 'json', 'png', 'plist'])}`.padEnd(34) + fmt(rr() * 80 * MB).padStart(9)), '… 共 ' + num(((rr() * 4000) | 0) + 200) + ' 个条目'];
+  } else if (cat === 'doc' && (e === 'md' || e === 'txt' || e === 'csv')) {
+    lines = e === 'csv' ? ['id,name,size,updated_at', ...Array.from({length: 7}, (_, i) => `${i + 1},${pickR(rr, WORDS)},${(rr() * 1e6) | 0},2026-0${1 + i}-1${i}`)] : ['# ' + n.name.replace(/\.\w+$/, ''), '', 'FanFree 是一个跨平台磁盘分析与清理工具。', '', '## 特性', '- 高性能并行扫描', '- 旭日图交互式浏览', '- 安全评估规则引擎'];
+  } else if (cat === 'doc') {
+    return `<div class="pv"><div class="img" style="height:150px;background:#f4f1ea;display:flex;flex-direction:column;gap:7px;padding:18px 26px">${Array.from({length: 8}, (_, i) => `<div style="height:${i ? 6 : 10}px;width:${i ? 50 + rr() * 50 : 45}%;background:#${i ? 'c9c4b8' : '6b6457'};border-radius:2px"></div>`).join('')}<span style="color:#fff">${e.toUpperCase()} · ${((n.size / 60 / KB) | 0) + 1} 页</span></div></div>`;
+  } else {
+    lines = Array.from({length: 8}, (_, i) => (i * 16).toString(16).padStart(8, '0') + '  ' + Array.from({length: 16}, () => ((rr() * 256) | 0).toString(16).padStart(2, '0')).join(' '));
+  }
+  return `<div class="pv"><pre>${esc(lines.join('\n'))}</pre></div>`;
+}
+const pickR = (rr, a) => a[(rr() * a.length) | 0];
+
+/* =========================================================================
+   Trash bin — grows with what it holds: desk bin → wastebasket → can → wheelie bin → dumpster
+   ========================================================================= */
+const binEl = $('#bin');
+let pileEl = null, tierI = -1;
+const RIM = '#56565e', BODY = 'fill="#ffffff07" stroke="#ffffff26" stroke-width="1.2"';
+function mesh(w, y0, y1, step) { let d = ''; for (let x = -w; x < w * 2; x += step) d += `M${x} ${y0}L${x + (y1 - y0)} ${y1}M${x + (y1 - y0)} ${y0}L${x} ${y1}`; return d; }
+const TIERS = [
+  {name: '桌面纸篓', w: 54, h: 60, m: 16, b: 57, tx: [6, 48], bx: [9, 45], f: 0,
+    back: `<path d="M6 15H48L45.2 55.5Q44.9 58 42.4 58H11.6Q9.1 58 8.8 55.5Z" fill="#1b1b1f"/><ellipse cx="27" cy="15" rx="21" ry="3.6" fill="#0c0c0e" stroke="#3c3c43" stroke-width="1.6"/>`,
+    front: `<path class="body" d="M6 15H48L45.2 55.5Q44.9 58 42.4 58H11.6Q9.1 58 8.8 55.5Z" ${BODY}/><path class="rim" d="M6 15A21 3.6 0 0 0 48 15" fill="none" stroke="${RIM}" stroke-width="1.8"/><path d="M10.5 21L12.6 52" stroke="#ffffff14" stroke-width="2.2" stroke-linecap="round"/>`},
+  {name: '废纸篓', w: 70, h: 78, m: 18, b: 75, tx: [5, 65], bx: [12, 58], f: .004,
+    back: `<path d="M5 17H65L58.6 73.6Q58.2 76 55.8 76H14.2Q11.8 76 11.4 73.6Z" fill="#18181b"/><ellipse cx="35" cy="17" rx="30" ry="4.6" fill="#0c0c0e" stroke="#3c3c43" stroke-width="1.6"/>`,
+    front: `<clipPath id="bk1"><path d="M5 17H65L58.6 73.6Q58.2 76 55.8 76H14.2Q11.8 76 11.4 73.6Z"/></clipPath>
+      <path class="body" d="M5 17H65L58.6 73.6Q58.2 76 55.8 76H14.2Q11.8 76 11.4 73.6Z" fill="#ffffff04" stroke="#ffffff26" stroke-width="1.2"/>
+      <path clip-path="url(#bk1)" d="${mesh(70, 17, 77, 7)}" stroke="#ffffff0f" stroke-width=".9"/>
+      <path d="M11.2 69H58.8" stroke="#ffffff18" stroke-width="3"/>
+      <path class="rim" d="M5 17A30 4.6 0 0 0 65 17" fill="none" stroke="${RIM}" stroke-width="2.2"/>`},
+  {name: '垃圾桶', w: 84, h: 100, m: 26, b: 95, tx: [8, 76], bx: [14, 70], f: .03, lid: '6px 21px',
+    back: `<path d="M8 24H76L70.2 90.5Q69.6 96 64 96H20Q14.4 96 13.8 90.5Z" fill="#1b1b1f"/><path d="M10 26H74L73 34H11Z" fill="#00000040"/>`,
+    front: `<path class="body" d="M8 24H76L70.2 90.5Q69.6 96 64 96H20Q14.4 96 13.8 90.5Z" ${BODY}/>
+      <path d="M17.7 28L22.7 92M27.4 28L30.4 93M37.1 28L38.1 93M46.9 28L45.9 93M56.6 28L53.6 93M66.3 28L61.3 92" stroke="#ffffff10"/>
+      <path d="M12.5 34L16 88" stroke="#ffffff14" stroke-width="2.5" stroke-linecap="round"/><rect x="5.5" y="21" width="73" height="5" rx="2.5" fill="#46464d"/>`,
+    lidSvg: `<g class="lid" style="transform-origin:6px 21px"><path d="M33 14.5V11a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v3.5" fill="none" stroke="#5a5a62" stroke-width="2.6"/>
+      <rect x="4" y="14" width="76" height="7.5" rx="3.5" fill="#3c3c43"/><rect x="4" y="14" width="76" height="2.5" rx="1.25" fill="#ffffff14"/></g>`},
+  {name: '大垃圾桶', w: 108, h: 136, m: 38, b: 121, tx: [10, 98], bx: [16, 92], f: .1,
+    back: `<path d="M10 36H98L92.4 118Q92 122 88 122H20Q16 122 15.6 118Z" fill="#1b1b1f"/><path d="M12 38H96L95 47H13Z" fill="#00000040"/>`,
+    front: `<path class="body" d="M10 36H98L92.4 118Q92 122 88 122H20Q16 122 15.6 118Z" ${BODY}/>
+      <path d="M24 42L27 116M38 42L39.5 117M54 42V117M70 42L68.5 117M84 42L81 116" stroke="#ffffff0d"/>
+      <path d="M13.5 60H94.5" stroke="#ffffff10" stroke-width="5"/><rect x="42" y="74" width="24" height="15" rx="2" fill="none" stroke="#ffffff16"/>
+      <path d="M15 46L19.5 112" stroke="#ffffff14" stroke-width="3" stroke-linecap="round"/><rect x="7" y="33" width="94" height="5.5" rx="2.5" fill="#46464d"/>
+      <circle cx="25" cy="126" r="9" fill="#2b2b30" stroke="#ffffff1f"/><circle cx="25" cy="126" r="3" fill="#4a4a52"/>
+      <circle cx="83" cy="126" r="9" fill="#2b2b30" stroke="#ffffff1f"/><circle cx="83" cy="126" r="3" fill="#4a4a52"/>`,
+    lidSvg: `<g class="lid" style="transform-origin:6px 33px"><rect x="4" y="24" width="100" height="10" rx="3" fill="#3c3c43"/><rect x="4" y="24" width="100" height="3" rx="1.5" fill="#ffffff14"/>
+      <rect x="42" y="19.5" width="24" height="4.5" rx="2.2" fill="#5a5a62"/></g>`},
+  {name: '垃圾箱', w: 172, h: 118, m: 38, b: 101, tx: [9, 163], bx: [17, 155], f: .22, big: true,
+    back: `<path d="M8 36H164L156 102H16Z" fill="#1b1b1f"/><path d="M10 38H162L161 47H11Z" fill="#00000040"/>`,
+    front: `<path class="body" d="M8 36H164L156 102H16Z" ${BODY}/>
+      <path d="M12 58H160M14.5 79H157.5" stroke="#ffffff12" stroke-width="1.2"/><path d="M50 40L52 100M86 40V100M122 40L120 100" stroke="#ffffff0b"/>
+      <rect x="28" y="85" width="34" height="9" rx="1.5" fill="#0e0e10" stroke="#ffffff1a"/><rect x="110" y="85" width="34" height="9" rx="1.5" fill="#0e0e10" stroke="#ffffff1a"/>
+      <path d="M13 44L18 96" stroke="#ffffff14" stroke-width="3" stroke-linecap="round"/><rect x="5" y="33" width="162" height="5.5" rx="2.5" fill="#46464d"/>
+      <rect x="27" y="102" width="7" height="5" fill="#3a3a40"/><rect x="138" y="102" width="7" height="5" fill="#3a3a40"/>
+      <circle cx="30.5" cy="110" r="6.5" fill="#2b2b30" stroke="#ffffff1f"/><circle cx="141.5" cy="110" r="6.5" fill="#2b2b30" stroke="#ffffff1f"/>`,
+    lidSvg: `<g class="lid" style="transform-origin:6px 33px"><rect x="4" y="25" width="82" height="9" rx="2.5" fill="#3c3c43"/><rect x="4" y="25" width="82" height="2.6" rx="1.3" fill="#ffffff14"/></g>
+      <g class="lid lid2" style="transform-origin:166px 33px"><rect x="86" y="25" width="82" height="9" rx="2.5" fill="#37373e"/><rect x="86" y="25" width="82" height="2.6" rx="1.3" fill="#ffffff12"/></g>`},
+];
+/* bin drawing styles · 写实 (glass + metal) · 线稿 (single-weight line art) · 彩塑 (coloured plastic — each size has its own colour, like real bins) */
+const BSTYLES = [['real', '写实'], ['line', '线稿'], ['clay', '彩塑']];
+const CLAY = [['#d2ad83', '#9c7a56', '#3a2f24'], ['#c47f63', '#8d5440', '#35241e'], ['#a3a8b0', '#6c7078', '#24262a'], ['#5c9a79', '#3b6b52', '#1c2a22'], ['#4f72a3', '#304b72', '#171d29']];
+let binStyle = (() => { try { return localStorage.getItem('fanfree.binStyle') || 'real'; } catch (e) { return 'real'; } })();
+function setBinStyle(k) {
+  binStyle = k; try { localStorage.setItem('fanfree.binStyle', k); } catch (e) {}
+  for (const [s] of BSTYLES) binEl.classList.toggle('s-' + s, s === k);
+  document.querySelectorAll('#bStyle button').forEach(b => b.classList.toggle('on', b.dataset.b === k));
+  if (!document.body.classList.contains('static')) binEl.querySelector('.bw').animate([{transform: 'scale(.94,1.04)', opacity: .4}, {transform: 'none', opacity: 1}], {duration: 260, easing: 'cubic-bezier(.3,1.4,.5,1)'});
+}
+const tierFor = s => { const f = s / (capacity || 1); let i = 0; while (i < TIERS.length - 1 && s > 0 && f > TIERS[i + 1].f) i++; return i; };
+function setTier(i, animate = true) {
+  if (i === tierI) return;
+  const prev = TIERS[tierI], T = TIERS[i], grow = tierI >= 0 && i > tierI; tierI = i;
+  const keep = ['open', 'hot'].filter(c => binEl.classList.contains(c));
+  binEl.className = (T.lidSvg ? 'lidded ' : 'lidless ') + keep.join(' ') + ' s-' + binStyle + (scene === 'trash' ? ' hero' : '');
+  const C = CLAY[i]; binEl.style.setProperty('--cl1', C[0]); binEl.style.setProperty('--cl2', C[1]); binEl.style.setProperty('--cl3', C[2]);
+  const vb = `viewBox="0 0 ${T.w} ${T.h}"`;
+  binEl.innerHTML = `<div class="bw" style="width:${T.w}px;height:${T.h}px">
+    <svg class="back" ${vb}>${T.back}</svg>
+    <div id="pile" style="clip-path:polygon(${T.tx[0]}px ${T.m - 2}px,${T.tx[1]}px ${T.m - 2}px,${T.bx[1]}px ${T.b}px,${T.bx[0]}px ${T.b}px)"></div>
+    <svg class="front" ${vb}><defs><linearGradient id="clB" x1="0" x2="1"><stop offset="0" stop-color="${C[1]}"/><stop offset=".3" stop-color="${C[0]}"/><stop offset=".55" stop-color="${C[0]}"/><stop offset="1" stop-color="${C[1]}"/></linearGradient>
+      <linearGradient id="clL" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${C[0]}"/><stop offset="1" stop-color="${C[1]}"/></linearGradient></defs>${T.front}</svg>${T.lidSvg ? `<svg class="lidl" ${vb}>${T.lidSvg}</svg>` : ''}</div>`;
+  pileEl = $('#pile');
+  binEl.style.width = T.w + 'px'; binEl.style.height = T.h + 'px';
+  binEl.title = `${P.trash}（${T.name}）— 拖动文件到这里删除`;
+  $('#right').classList.toggle('huge', !!T.big);
+  if (scene === 'trash') layoutHero();
+  if (!animate || !prev || document.body.classList.contains('static')) return;
+  binEl.querySelector('.bw').animate([
+    {transform: `scale(${prev.w / T.w},${prev.h / T.h})`, opacity: .5},
+    {transform: grow ? 'scale(1.06,.95)' : 'scale(.97,1.03)', opacity: 1, offset: .55},
+    {transform: 'none'}], {duration: 380, easing: 'cubic-bezier(.3,1.2,.5,1)'});
+  if (grow) {   // the bigger bin shoves its neighbours aside
+    $('#dock .dk').animate([{transform: 'translateX(-10px)'}, {transform: 'none'}], {duration: 420, easing: 'cubic-bezier(.3,1.5,.5,1)'});
+    $('#detail').animate([{transform: 'translateY(-6px)'}, {transform: 'none'}], {duration: 380, easing: 'cubic-bezier(.3,1.5,.5,1)'});
+  }
+}
+/** Bin-local origin on screen: the box animates its size, but its bottom-right corner never moves. */
+function binOrigin() { const b = binEl.getBoundingClientRect(), T = TIERS[tierI]; return {x: b.right - T.w, y: b.bottom - T.h}; }
+
+const ballR = size => Math.max(2.6, Math.min(8, 1.6 + Math.log10(size / MB + 1) * 1.55)) * (.85 + tierI * .08);
+let pileMap = new Map();
+/** Deterministic heightmap packing of trash items into the current bin (bin-local px). */
+function layoutPile() {
+  const T = TIERS[tierI], H = new Float32Array(T.w + 2); pileMap = new Map();
+  const room = T.b - T.m, lo = (T.tx[0] + T.bx[0]) / 2 + 1, hi = (T.tx[1] + T.bx[1]) / 2 - 1;
+  for (const it of trash.items) {
+    const r = ballR(it.n.size), rr = mulberry32(it.n.id * 7 + 3);
+    let best = null;
+    for (let k = 0; k < 6; k++) {
+      const cx = lo + r + rr() * (hi - lo - 2 * r);
+      let base = 0;
+      for (let x = Math.ceil(cx - r); x <= Math.floor(cx + r); x++) { const dx = x - cx; base = Math.max(base, H[x] - r + Math.sqrt(Math.max(0, r * r - dx * dx))); }
+      if (!best || base < best.base) best = {cx, base};
+    }
+    if (best.base + 2 * r > room) continue;           // visually full; item still counted
+    for (let x = Math.ceil(best.cx - r); x <= Math.floor(best.cx + r); x++) { const dx = x - best.cx; H[x] = Math.max(H[x], best.base + r + Math.sqrt(Math.max(0, r * r - dx * dx))); }
+    pileMap.set(it, {x: best.cx, y: T.b - best.base - r, r, c: LV[it.lv].c});
+  }
+}
+function renderPile(fresh) {
+  let h = '';
+  for (const it of trash.items) {
+    if (it.fly) continue; const p = pileMap.get(it); if (!p) continue;
+    h += `<i data-k="${trash.items.indexOf(it)}"${fresh && fresh.includes(it) ? ' class="new"' : ''} style="left:${(p.x - p.r).toFixed(1)}px;top:${(p.y - p.r).toFixed(1)}px;width:${(2 * p.r).toFixed(1)}px;height:${(2 * p.r).toFixed(1)}px;background:${p.c};color:${p.c}"></i>`;
+  }
+  pileEl.innerHTML = h;
+}
+/** Where a node is on screen right now: its arc, its list row, or a point. */
+function specFor(n, el) {
+  if (el && el.classList && el.classList.contains('row')) { const sw = el.querySelector('.sw'); return {kind: 'rect', rect: el.getBoundingClientRect(), color: sw && sw.style.background}; }
+  const h = hits.find(x => x.n === n);
+  if (h) return {kind: 'arc', hit: h, color: h.fill};
+  if (el && el.getBoundingClientRect) return {kind: 'rect', rect: el.getBoundingClientRect()};
+  const p = arcPoint(n); return {kind: 'pt', x: p.x, y: p.y};
+}
+function arcPathD(h, ox, oy) {
+  const pad = Math.min(.8 / h.r0, (h.a1 - h.a0) * .2);
+  const a0 = A0 + h.a0 + pad, a1 = A0 + Math.min(h.a1 - pad, h.a0 + TAU - .002), lg = a1 - a0 > Math.PI ? 1 : 0;
+  const P2 = (r, a) => `${(ox + CX + Math.cos(a) * r).toFixed(1)} ${(oy + CY + Math.sin(a) * r).toFixed(1)}`;
+  return `M${P2(h.r0, a0)}L${P2(h.r1, a0)}A${h.r1} ${h.r1} 0 ${lg} 1 ${P2(h.r1, a1)}L${P2(h.r0, a1)}A${h.r0} ${h.r0} 0 ${lg} 0 ${P2(h.r0, a0)}Z`;
+}
+/** source (arc | row | point) → ball → arc over → drop into the bin onto its pile slot. */
+function throwItems(spec, its, delay = 0, vary = 0) {
+  const lead = its[0], weight = its.length;
+  const size = its.reduce((a, x) => a + x.n.size, 0);
+  const pos = pileMap.get(lead), T = TIERS[tierI], bo = binOrigin();
+  const r = pos ? pos.r : ballR(size);
+  const D = Math.max(12, Math.min(30, ballR(size) * 2 * 1.8)), endS = (2 * r) / D;
+  const c0 = spec.color || LV[lead.lv].c, c1 = LV[lead.lv].c;
+  let sx, sy, morphT = 0;
+  if (spec.kind === 'arc') {
+    const h = spec.hit, am = A0 + (h.a0 + h.a1) / 2, rm = (h.r0 + h.r1) / 2, cr = cv.getBoundingClientRect();
+    sx = cr.left + CX + Math.cos(am) * rm; sy = cr.top + CY + Math.sin(am) * rm;
+    if (h.a1 - h.a0 > Math.PI) { sx = cr.left + CX + Math.cos(am) * h.r1 * .8; sy = cr.top + CY + Math.sin(am) * h.r1 * .8; }
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'shard'); svg.setAttribute('width', innerWidth); svg.setAttribute('height', innerHeight);
+    svg.innerHTML = `<path d="${arcPathD(h, cr.left, cr.top)}" fill="${c0}"/>`;
+    svg.style.transformOrigin = `${sx}px ${sy}px`;
+    document.body.appendChild(svg);
+    svg.animate([{transform: 'scale(1)', opacity: 1}, {transform: 'scale(1.05)', opacity: 1, offset: .3}, {transform: 'scale(.08)', opacity: .2}],
+      {duration: 210, delay, easing: 'cubic-bezier(.5,0,.8,.4)', fill: 'both'}).onfinish = () => svg.remove();
+    morphT = 150;
+  } else if (spec.kind === 'rect') {
+    const rc = spec.rect; sx = rc.left + rc.width / 2; sy = rc.top + rc.height / 2;
+    const m = document.createElement('div'); m.className = 'morph'; m.style.background = c0;
+    document.body.appendChild(m);
+    m.animate([{left: rc.left + 'px', top: rc.top + 'px', width: rc.width + 'px', height: rc.height + 'px', borderRadius: '6px', opacity: .35},
+      {left: sx - D / 2 + 'px', top: sy - D / 2 + 'px', width: D + 'px', height: D + 'px', borderRadius: D / 2 + 'px', opacity: 1}],
+      {duration: 170, delay, easing: 'cubic-bezier(.4,0,.2,1)', fill: 'both'}).onfinish = () => m.remove();
+    morphT = 150;
+  } else { sx = spec.x; sy = spec.y; }
+  const tx = bo.x + (pos ? pos.x : T.w / 2), ty = bo.y + (pos ? pos.y : T.b - 10), hy = bo.y + T.m - 28;
+  const mx = (sx + tx) / 2 + (Math.random() - .5) * 90, my = Math.min(sy, hy) - 50 - Math.random() * 80;
+  const ball = document.createElement('div'); ball.className = 'ball';
+  ball.style.width = ball.style.height = D + 'px'; ball.style.background = c0;
+  document.body.appendChild(ball);
+  const Tf = (x, y, s) => `translate(${(x - D / 2).toFixed(1)}px,${(y - D / 2).toFixed(1)}px) scale(${s.toFixed(3)})`;
+  const fr = [{transform: Tf(sx, sy, morphT ? 1 : .2), opacity: morphT ? 1 : 0, background: c0, offset: 0}];
+  if (!morphT) fr.push({transform: Tf(sx, sy - 4, 1.1), opacity: 1, offset: .08});
+  const N = 16, F0 = morphT ? 0 : .08, F1 = .74;
+  for (let i = 1; i <= N; i++) {
+    const t = i / N, u = 1 - t, x = u * u * sx + 2 * u * t * mx + t * t * tx, y = u * u * sy + 2 * u * t * my + t * t * hy;
+    fr.push({transform: Tf(x, y, 1 - .15 * t), opacity: 1, offset: F0 + (F1 - F0) * t});
+  }
+  for (let i = 1; i <= 6; i++) { const t = i / 6; fr.push({transform: Tf(tx, hy + (ty - hy) * t * t, .85 + (endS - .85) * t), opacity: 1, background: c1, offset: F1 + (1 - F1) * t}); }
+  for (const it of its) it.fly = true;
+  trash.inflightN += weight; binEl.classList.add('open');
+  const dur = (440 + Math.hypot(tx - sx, ty - sy) * .13) * (1 + vary);
+  ball.animate(fr, {duration: dur, delay: delay + morphT, easing: 'linear', fill: 'both'}).onfinish = () => {
+    ball.remove();
+    for (const it of its) it.fly = false;
+    trash.inflightN -= weight;
+    renderPile(its); renderTrashBadge(true);
+    binEl.classList.remove('bump'); void binEl.offsetWidth; binEl.classList.add('bump');
+    if (trash.inflightN <= 0) setTimeout(() => { if (trash.inflightN <= 0 && !binEl.classList.contains('hot')) binEl.classList.remove('open'); }, 220);
+  };
+}
+/** Remove nodes from the tree (into in-app trash), animate sunburst morph. */
+function removeNodes(nodes, why) {
+  snapshot();
+  const batch = [];
+  for (const n of nodes) {
+    if (n.gone || !n.parent) continue;
+    const it = {n, at: Date.now(), lv: verdict(n).level, fly: true, why: why ? why.get(n) : null};
+    detach(n); trash.items.push(it); batch.push(it);
+  }
+  layout(root, 0, 1);
+  morph = {t0: performance.now(), dur: 400};
+  VER++;
+  if (!attached(focus)) {
+    zoom = {x0: view.x0, x1: view.x1, d: view.d, t0: performance.now(), dur: 400};
+    let a = focus; while (!attached(a)) a = a.parent; focus = a;
+  }
+  if (selected && !attached(selected)) selected = null;
+  if (hover && (hover.agg || !attached(hover))) hover = null;
+  refreshAll();
+  return batch;
+}
+function restoreItems(items) {
+  if (!items.length) return;
+  snapshot();
+  const restored = [];
+  let unlearned = 0;
+  for (const it of items) {
+    const i = trash.items.indexOf(it); if (i < 0) continue;
+    trash.items.splice(i, 1); reattach(it.n); restored.push(it.n);
+    if (it.manual) learn(it.n, -1);                    // undoing a manual delete: forget it
+    else if (it.why) unlearned += learn(it.n, 0, 1);   // restoring a habit-based pick: negative feedback
+  }
+  saveHist();
+  const t = performance.now(); layout(root, 0, 1);
+  for (const n of restored) setOx(n, n.x0);
+  morph = {t0: t, dur: 420}; VER++;
+  refreshAll(); renderTrashPop();
+  if (unlearned) toast(`已记录：以后不再按此习惯自动清理同类项`);
+}
+function requestTrash(n, src) {
+  if (!n.parent) return;
+  const v = verdict(n);
+  if (v.level === 'protected') {
+    if (src && src.classList) { src.classList.remove('shake'); void src.offsetWidth; src.classList.add('shake'); }
+    toast(`「${n.name}」受系统保护：${v.reason}`); return false;
+  }
+  const go = () => {
+    const spec = src && src.kind ? src : specFor(n, src);
+    const batch = removeNodes([n]);
+    if (!batch.length) return;
+    batch[0].manual = true;
+    const got = learn(n, 1); saveHist();
+    throwItems(spec, batch, 0);
+    toast(`已将「${n.name}」移至${P.trash}（${fmt(n.size)}）`, [['撤销', () => restoreItems(batch)]]);
+    if (got) setTimeout(() => toast(`已学会：${got} · 自动清理会一并处理同类项`, [], 5200), 380);
+  };
+  if (v.level === 'risky') confirmBox('确认删除个人数据？', `「${esc(n.name)}」被识别为个人数据（${esc(v.reason)}），大小 ${fmt(n.size)}。<br>它会先进入${P.trash}，清空前仍可还原。`, '仍然移至' + P.trash, go, true);
+  else go();
+  return true;
+}
+/** Throw many candidates into the bin: organic stagger — quick to start, accelerating, never metronomic. */
+function freeUp(items) {
+  items = items.filter(x => !x.n.gone && x.n.size > 0).sort((a, b) => b.n.size - a.n.size);
+  if (!items.length) { toast('没有可安全清理的项目'); return; }
+  const specs = new Map(items.map(x => [x.n, specFor(x.n, null)]));
+  const why = new Map(items.filter(x => x.habit).map(x => [x.n, x.habit]));
+  const total = items.reduce((s, x) => s + x.n.size, 0);
+  const batch = removeNodes(items.map(x => x.n), why);
+  lastBatch = batch;
+  const SHOW = Math.min(28, batch.length), SPAN = Math.min(620, 140 + SHOW * 20);
+  const rnd = mulberry32(batch.length * 31 + 7);
+  let last = 0;
+  batch.slice(0, SHOW).forEach((it, i) => {
+    const u = SHOW > 1 ? i / (SHOW - 1) : 0;
+    const d = SPAN * Math.pow(u, .72) + (rnd() - .5) * 34 * (1 - u * .5);   // front-loaded spacing + jitter
+    last = Math.max(last, d);
+    throwItems(specs.get(it.n), [it], Math.max(0, d), (rnd() - .5) * .22);
+  });
+  const rest = batch.slice(SHOW);
+  if (rest.length) {      // the long tail leaves as a few clumps, not one per file
+    const rc = cv.getBoundingClientRect(), K = Math.min(3, rest.length);
+    for (let k = 0; k < K; k++) {
+      const part = rest.filter((_, j) => j % K === k), a = A0 + rnd() * TAU, rr = R0 + rnd() * RW * 2;
+      throwItems({kind: 'pt', x: rc.left + CX + Math.cos(a) * rr, y: rc.top + CY + Math.sin(a) * rr}, part, last * .7 + 60 + k * (40 + rnd() * 50), (rnd() - .5) * .2);
+    }
+  }
+  const nh = batch.filter(x => x.why).length;
+  setTimeout(() => toast(`已将 ${items.length} 项（${fmt(total)}）移至${P.trash}${nh ? `，其中 ${nh} 项依据你的习惯` : ''}`,
+    [['撤销', () => restoreItems(batch)], ['立即清空', () => emptyTrash(true)]], 7000), last + 700);
+}
+
+/* trash UI */
+const trashSize = (landed) => trash.items.reduce((s, x) => s + (landed && x.fly ? 0 : x.n.size), 0);
+function renderTrashBadge(fromLand) {
+  if (!fromLand) { setTier(tierFor(trashSize())); layoutPile(); renderPile(); }
+  const n = trash.items.length, landed = trash.items.filter(x => !x.fly).length;
+  $('#dkTitle').textContent = n ? `${P.trash} · ${TIERS[tierI].name}` : P.trash;
+  $('#dkSize').textContent = landed ? fmt(trashSize(true)) : '空';
+  $('#tSz').textContent = n ? `${num(landed)} 项 · 清空前可随时还原` : '拖动文件到这里删除';
+  $('#dkEmpty').disabled = $('#dkView').disabled = !n;
+  renderDisk();
+}
+/* =========================================================================
+   Scenes — one hero + sections. explore: sunburst hero · trash: bin hero · eval: sunburst hero (live selection)
+   Leaving a scene staggers its sections out; shared elements (the bin) morph instead of fading.
+   ========================================================================= */
+let scene = 'explore', sceneTok = 0, evalHL = null;
+const SC_EL = {trash: () => $('#scTrash'), eval: () => $('#scEval')};
+function exploreEls() {
+  const R = $('#right').getBoundingClientRect();
+  return [...$('#right').querySelectorAll('.disk, .lhead, #list .row, #detail > *, #dock .dk')]
+    .filter(el => { const r = el.getBoundingClientRect(); return r.height && r.bottom > R.top && r.top < R.bottom; });
+}
+function staggerOut(els, step = 14) {
+  const n = els.length, total = Math.min(160, step * n), st = n > 1 ? total / (n - 1) : 0;
+  return Promise.all(els.map((el, i) => el.animate([{opacity: 1, transform: 'none'}, {opacity: 0, transform: 'translateY(-6px)'}],
+    {duration: 150, delay: i * st, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards'}).finished.catch(() => {})));
+}
+function staggerIn(els, delay = 0, step = 26) {
+  els = [...els]; const n = els.length, total = Math.min(260, step * n), st = n > 1 ? total / (n - 1) : 0;
+  els.forEach((el, i) => el.animate([{opacity: 0, transform: 'translateY(10px)'}, {opacity: 1, transform: 'none'}],
+    {duration: 300, delay: delay + i * st, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards'}));
+}
+async function goScene(next, instant) {
+  if (next === scene && !instant) return;
+  const prev = scene, tok = ++sceneTok; scene = next;
+  const R = $('#right'), M = $('main');
+  const outEls = instant ? [] : prev === 'explore' ? exploreEls() : [...SC_EL[prev]().querySelectorAll('[data-st]')];
+  // layout morph: the section column widens for detail scenes; the sunburst hero recedes when the bin takes over
+  M.classList.toggle('wide', next !== 'explore');
+  $('#left').classList.toggle('tv', next === 'trash');
+  if (next === 'trash' && !tsun) { renderTvLegend(); if (instant) { tsun = buildTrashSun(); renderTvLegend(); } else enterTrashSun(); }
+  else if (next !== 'trash') leaveTrashSun(instant);
+  R.dataset.scene = next;
+  if (next !== 'eval') { evalHL = null; dirty = true; }
+  if (next === 'trash') { renderTrashScene(); heroBin(true); } else if (prev === 'trash') heroBin(false);
+  if (outEls.length) await staggerOut(outEls);
+  if (tok !== sceneTok) return;
+  outEls.forEach(el => el.getAnimations().forEach(a => a.cancel()));
+  R.classList.toggle('off', next !== 'explore');
+  for (const k in SC_EL) SC_EL[k]().classList.toggle('on', k === next);
+  if (instant) return;
+  if (next === 'explore') { renderRows(); staggerIn(exploreEls(), 40, 18); }
+  else staggerIn(SC_EL[next]().querySelectorAll('[data-st]'), next === 'trash' ? 120 : 40);
+}
+const closeScene = () => goScene('explore');
+$('#left').addEventListener('click', e => { if (scene === 'trash' && !e.target.closest('#cv')) { e.stopPropagation(); closeScene(); } }, true);
+
+/* the bin as hero: a FLIP-style transform from its dock slot to the bottom-centre of the (widening) column */
+function heroBin(on) {
+  binEl.classList.toggle('hero', on);
+  if (!on) { binEl.style.transform = ''; return; }
+  layoutHero();
+}
+function finalColW(mw) { return scene === 'explore' ? Math.max(250, Math.min(.33 * mw, 400)) : Math.max(340, Math.min(.46 * mw, 640)); }
+function layoutHero() {
+  if (scene !== 'trash') return;
+  const T = TIERS[tierI], m = $('main').getBoundingClientRect(), w = finalColW(m.width);
+  const heroH = Math.max(110, Math.min(210, m.height * .27)), S = Math.min(Math.min(w * .44, 260) / T.w, heroH / T.h, 3.2);
+  const bx = m.right - 14 - T.w / 2, by = m.bottom - 10 - T.h / 2;     // the bin's own slot (dock padding)
+  const tx = m.right - w / 2, ty = m.bottom - 30 - T.h * S / 2;
+  binEl.style.transform = `translate(${(tx - bx).toFixed(1)}px,${(ty - by).toFixed(1)}px) scale(${S.toFixed(3)})`;
+  $('#scTrash').style.setProperty('--hero', (T.h * S + 52).toFixed(0) + 'px');
+}
+new ResizeObserver(() => layoutHero()).observe($('main'));
+
+/* trash scene: sections explain the pile; balls and rows are linked */
+function trashGroups() {
+  const by = {rule: [], manual: [], habit: []};
+  for (const it of trash.items) (it.why ? by.habit : it.manual ? by.manual : by.rule).push(it);
+  return by;
+}
+const SRC = {rule: ['按清理规则', 'var(--safe)'], manual: ['你手动删除', 'var(--t2)'], habit: ['依据你的历史操作', 'var(--review)']};
+function renderTrashScene() {
+  const el = $('#scTrash'), T = TIERS[tierI], n = trash.items.length, s = trashSize(), by = trashGroups();
+  const sz = a => a.reduce((t, x) => t + x.n.size, 0);
+  const X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  const row = it => `<div class="tr" data-k="${trash.items.indexOf(it)}"><i style="background:${LV[it.lv].c}"></i><div class="n"><div>${esc(it.n.name)}</div><small>${esc(displayPath(it.n))}</small></div><b>${fmt(it.n.size)}</b><button>还原</button></div>`;
+  const grp = k => {
+    const a = by[k]; if (!a.length) return '';
+    a.sort((x, y) => y.n.size - x.n.size);
+    let sub = '';
+    if (k === 'habit') { const g = new Map(); for (const it of a) g.set(it.why.label, it.why); sub = [...g.values()].map(w => `<div class="tg-why">${esc(w.label)} · 你曾手动删除 ${w.d} 个同类项${w.seed ? '（示例历史）' : ''}</div>`).join(''); }
+    return `<div class="tg"><div class="tg-h"><i style="background:${SRC[k][1]}"></i>${SRC[k][0]}<em>${a.length} 项</em><span>${fmt(sz(a))}</span></div>${sub}${a.slice(0, 300).map(row).join('')}${a.length > 300 ? `<div class="tg-why">另有 ${a.length - 300} 项</div>` : ''}</div>`;
+  };
+  el.innerHTML = `<div class="tsh" data-st><div class="k">${P.trash} · ${T.name}</div><div class="big">${n ? bigSize(s) : '空'}</div>
+      <div class="sub">${n ? `${num(n)} 项 · 清空前可随时还原 · 占磁盘 ${(100 * s / capacity).toFixed(1)}%` : '删除的内容会先放在这里，清空前都可以还原'}</div>
+      <div class="tabs bs" id="bStyle">${BSTYLES.map(([k, l]) => `<button data-b="${k}" class="${k === binStyle ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <button class="btn icon x" id="tsClose" title="关闭（Esc）">${X}</button></div>
+    ${n ? `<div class="tsb" data-st>${['rule', 'manual', 'habit'].filter(k => by[k].length).map(k => `<i style="flex:${sz(by[k])};background:${SRC[k][1]}"></i>`).join('')}</div>` : ''}
+    <div class="tsl" id="tsList" data-st>${n ? grp('habit') + grp('manual') + grp('rule') : ''}</div>
+    <div class="tsa"><button class="btn" id="tsRestore" data-st ${n ? '' : 'disabled'}>全部还原</button><span class="sp"></span><button class="btn soft-danger" id="tsEmpty" data-st ${n ? '' : 'disabled'}>${n ? '清空 ' + fmt(s) : '清空'}</button></div>`;
+  $('#tsClose').onclick = closeScene;
+  $('#bStyle').onclick = e => { const b = e.target.closest('button'); if (b) setBinStyle(b.dataset.b); };
+  $('#tsRestore').onclick = () => restoreItems(trash.items.slice());
+  $('#tsEmpty').onclick = () => emptyTrash(false);
+  const list = $('#tsList');
+  list.onclick = e => { const r = e.target.closest('.tr'); if (r && e.target.closest('button')) restoreItems([trash.items[+r.dataset.k]]); };
+  list.onmouseover = e => { const r = e.target.closest('.tr'); const k = r ? +r.dataset.k : -1; ballHL(k); tsunHL(k >= 0 ? trash.items[k] : null); };
+  list.onmouseleave = () => { ballHL(-1); tsunHL(null); };
+  if (scene === 'trash') el.classList.add('on');
+}
+function ballHL(k) {
+  if (!pileEl) return;
+  pileEl.querySelectorAll('i.hl').forEach(b => b.classList.remove('hl'));
+  if (k >= 0) { const b = pileEl.querySelector(`i[data-k="${k}"]`); if (b) b.classList.add('hl'); }
+}
+binEl.addEventListener('mouseover', e => {
+  if (scene !== 'trash') return;
+  const b = e.target.closest('#pile i'); const list = $('#tsList');
+  list.querySelectorAll('.tr.hl').forEach(r => r.classList.remove('hl'));
+  if (!b) return;
+  ballHL(+b.dataset.k); tsunHL(trash.items[+b.dataset.k]);
+  const r = list.querySelector(`.tr[data-k="${b.dataset.k}"]`); if (r) { r.classList.add('hl'); r.scrollIntoView({block: 'nearest', behavior: 'smooth'}); }
+});
+binEl.addEventListener('mouseleave', () => { if (scene === 'trash') { ballHL(-1); tsunHL(null); $('#tsList').querySelectorAll('.tr.hl').forEach(r => r.classList.remove('hl')); } });
+binEl.onclick = e => { e.stopPropagation(); if (scene !== 'trash') goScene('trash'); };
+$('#dkView').onclick = e => { e.stopPropagation(); goScene('trash'); };
+$('#dkEmpty').onclick = e => { e.stopPropagation(); emptyTrash(false); };
+function renderTrashPop() { if (scene === 'trash') { renderTrashScene(); layoutHero(); refreshTrashSun(); } }
+function bigSize(b) { const [v, u] = fmt(b).split(' '); return `${v}<small>${u}</small>`; }
+function emptyTrash(fromToast) {
+  if (!trash.items.length) return;
+  const n = trash.items.length, s = trashSize();
+  // explain where every item came from — especially the ones picked by learned habits
+  const by = {rule: [], habit: [], manual: []};
+  for (const it of trash.items) (it.why ? by.habit : it.manual ? by.manual : by.rule).push(it);
+  const sz = a => fmt(a.reduce((t, x) => t + x.n.size, 0));
+  const groups = new Map(); for (const it of by.habit) { const g = groups.get(it.why.label) || {why: it.why, items: []}; g.items.push(it); groups.set(it.why.label, g); }
+  const tot = s || 1, bar = [['rule', 'var(--safe)'], ['manual', 'var(--t2)'], ['habit', 'var(--review)']].filter(([k]) => by[k].length)
+    .map(([k, c]) => `<i style="flex:${by[k].reduce((t, x) => t + x.n.size, 0) / tot};background:${c}"></i>`).join('');
+  let html = `${fmt(s)} 会从磁盘上抹掉，之后无法再还原。<div class="sbar">${bar}</div><div class="src">`
+    + (by.rule.length ? `<div><i style="background:var(--safe)"></i>按清理规则 <b>${by.rule.length} 项</b><span>${sz(by.rule)}</span></div>` : '')
+    + (by.manual.length ? `<div><i style="background:var(--t2)"></i>你手动删除 <b>${by.manual.length} 项</b><span>${sz(by.manual)}</span></div>` : '')
+    + (by.habit.length ? `<div><i style="background:var(--review)"></i>依据你的历史操作 <b>${by.habit.length} 项</b><span>${sz(by.habit)}</span></div>` : '') + '</div>';
+  if (by.habit.length) html += `<div class="hx">${[...groups.values()].map(g => `<div class="hxr"><b>${esc(g.why.label)}</b><span>你曾手动删除 ${g.why.d} 个同类项${g.why.seed ? '（示例历史）' : ''} → 本次 ${g.items.length} 项 · ${sz(g.items)}</span></div>`).join('')}
+    <button class="btn sm" id="cfKeep">还原这 ${by.habit.length} 项</button></div>`;
+  confirmBox(`永久删除这 ${num(n)} 个项目？`, html, `永久删除`, () => {
+    binEl.classList.remove('dump'); void binEl.offsetWidth; binEl.classList.add('dump');
+    const balls = [...pileEl.children];
+    balls.forEach((b, i) => b.animate([{transform: 'none', opacity: 1}, {transform: `translateY(${18 + Math.random() * 14}px) scale(.4)`, opacity: 0}],
+      {duration: 300, delay: (balls.length - i) * 3 + Math.random() * 90, easing: 'cubic-bezier(.5,0,1,.6)', fill: 'forwards'}));
+    const tb = binEl.getBoundingClientRect();
+    setTimeout(() => {
+      trash.items = []; freedTotal += s; VER++;
+      renderTrashBadge(); renderTrashPop(); refreshFreeBtn();
+      $('#sFreed').textContent = fmt(freedTotal);
+    }, 440);
+    const el = document.createElement('div'); el.className = 'freed'; el.textContent = '已释放 ' + fmt(s);
+    document.body.appendChild(el);
+    const w = el.offsetWidth, x = Math.max(8, Math.min(innerWidth - w - 12, tb.left + tb.width / 2 - w / 2));
+    el.animate([{transform: `translate(${x}px,${tb.top}px)`, opacity: 0},
+      {transform: `translate(${x}px,${tb.top - 40}px)`, opacity: 1, offset: .25},
+      {transform: `translate(${x}px,${tb.top - 100}px)`, opacity: 0}], {duration: 1300, easing: 'ease-out'}).onfinish = () => el.remove();
+  }, true, ICON_BIN);
+  const keep = $('#cfKeep');
+  if (keep) keep.onclick = () => { askClose(); restoreItems(by.habit); };
+}
+
+/* =========================================================================
+   Habit learning — manual deletes teach the auto-clean what you consider junk
+   signature = (folder, kind): "Downloads 中的 .dmg 文件", "CoreSimulator/Devices 中的文件夹", "… 2 个月前的内容"
+   rules: ≥2 net deletes of a signature → similar *review* items join auto-clean; risky / protected are never promoted;
+          candidates must be ≤ 4× the largest item you deleted; each restore of a learned pick counts −2.
+   ========================================================================= */
+let hist = {};
+const HIST_KEY = () => 'fanfree.habits.' + platKey;
+const SEED_HIST = {
+  mac: {'/users/me/downloads|.dmg': {d: 3, r: 0, max: 900 * MB, label: 'Downloads 中的 .dmg 文件', seed: 1},
+        '/users/me/library/developer/coresimulator/devices|dir': {d: 2, r: 0, max: 4.5 * GB, label: 'CoreSimulator/Devices 中的文件夹', seed: 1}},
+  win: {'c:/users/me/downloads|.exe': {d: 2, r: 0, max: 700 * MB, label: 'Downloads 中的 .exe 文件', seed: 1}},
+  linux: {'/home/me/downloads|.deb': {d: 2, r: 0, max: 200 * MB, label: 'Downloads 中的 .deb 文件', seed: 1}},
+};
+function loadHist() {
+  let h = null; try { h = JSON.parse(localStorage.getItem(HIST_KEY())); } catch (e) {}
+  hist = h || JSON.parse(JSON.stringify(SEED_HIST[platKey] || {}));
+}
+function saveHist() { try { localStorage.setItem(HIST_KEY(), JSON.stringify(hist)); } catch (e) {} }
+function sigsOf(n) {
+  const p = n.parent; if (!p || p.depth < 3) return [];        // never generalise over top-level folders like home
+  const where = p.parent && p.depth > 3 && /^(devices|data|cache|files|archives)$/i.test(p.name) ? `${p.parent.name}/${p.name}` : p.name;
+  const out = [];
+  if (n.children) out.push({k: p.p + '|dir', label: `${where} 中的文件夹`});
+  else { const e = extOf(n.name); if (e) out.push({k: p.p + '|.' + e, label: `${where} 中的 .${e} 文件`}); }
+  if (n.age > 60) out.push({k: p.p + '|old', label: `${where} 中 2 个月前的内容`, w: .75});
+  return out;
+}
+/** Record a manual delete (+1), undo one (−1), or a restore of a learned pick (r+1). Returns label when a habit crosses the threshold. */
+function learn(n, dd, rr = 0) {
+  let crossed = '';
+  for (const s of sigsOf(n)) {
+    const e = hist[s.k] || (hist[s.k] = {d: 0, r: 0, max: 0, label: s.label, w: s.w || 1});
+    const before = (e.d - 2 * e.r) * (e.w || 1);
+    e.d = Math.max(0, e.d + dd); e.r += rr; if (dd > 0) e.max = Math.max(e.max, n.size);
+    const after = (e.d - 2 * e.r) * (e.w || 1);
+    if (before < 2 && after >= 2 && !crossed) crossed = e.label;
+    if (rr && before >= 2 && after < 2) crossed = crossed || e.label;
+    if (!e.d && !e.r) delete hist[s.k];
+  }
+  return crossed ? (rr ? 1 : crossed) : (rr ? 0 : '');
+}
+function habitOf(n) {
+  if (verdict(n).level !== 'review' || n.depth < 3) return null;
+  let best = null;
+  for (const s of sigsOf(n)) {
+    const e = hist[s.k]; if (!e) continue;
+    const sc = (e.d - 2 * e.r) * (e.w || 1);
+    if (sc >= 2 && n.size <= e.max * 4 + 64 * MB && (!best || sc > best.sc)) best = {sc, label: e.label, d: e.d, seed: !!e.seed};
+  }
+  return best;
+}
+/** Walk the tree for habit matches that the rules did not already take. Time-sliced so the UI keeps breathing. */
+async function habitCandidates(scope, taken, onProgress, ctl) {
+  const anc = new Set(); for (const n of taken) for (let a = n.parent; a; a = a.parent) anc.add(a);
+  const out = [], stack = [scope], total = scope.cnt || 1; let seen = 0, t0 = performance.now();
+  while (stack.length) {
+    if (ctl && ctl.cancel) return out;
+    const n = stack.pop(); seen++;
+    if (taken.has(n)) continue;
+    const lv = verdict(n).level; if (lv === 'risky' || lv === 'protected' && n.parent) continue;
+    const h = !anc.has(n) && habitOf(n);
+    if (h) { out.push({n, r: verdict(n), habit: h}); continue; }
+    if (n.children) for (const c of n.children) stack.push(c);
+    if (ctl && performance.now() - t0 > 6) { onProgress && onProgress(seen / total); await new Promise(r => requestAnimationFrame(r)); t0 = performance.now(); }
+  }
+  onProgress && onProgress(1);
+  return out;
+}
+function habitCandidatesSync(scope, taken) {
+  const anc = new Set(); for (const n of taken) for (let a = n.parent; a; a = a.parent) anc.add(a);
+  const out = [], stack = [scope];
+  while (stack.length) {
+    const n = stack.pop(); if (taken.has(n)) continue;
+    const lv = verdict(n).level; if (lv === 'risky' || lv === 'protected' && n.parent) continue;
+    const h = !anc.has(n) && habitOf(n);
+    if (h) { out.push({n, r: verdict(n), habit: h}); continue; }
+    if (n.children) for (const c of n.children) stack.push(c);
+  }
+  return out;
+}
+
+/* =========================================================================
+   Auto-clean: analyse (async, cancellable) → plan → throw
+   The Go engine streams these phases over IPC; here they are simulated with real work on the tree.
+   ========================================================================= */
+let anal = null;
+const inUse = x => x.r.tag === '缓存' && IN_USE.find(([re]) => re.test(x.n.p));
+const IN_USE = [[/spotify/, 'Spotify'], [/slack/, 'Slack'], [/chrome|\/google$/, 'Chrome'], [/discord/, 'Discord']];
+async function autoClean() {
+  if (anal) { anal.cancel = true; return; }
+  if (!root) return;
+  if (scene !== 'explore') goScene('explore');
+  const A = anal = {t0: performance.now(), k: 0, cancel: false, found: 0, size: 0};
+  if (focus !== root) zoomTo(root);
+  setColorMode('safety');
+  const L = $('#left'); L.classList.add('busy');
+  $('#bFreeTxt').textContent = '停止分析'; $('#bFreeSz').textContent = '0%';
+  const PH = ['匹配清理规则', '检查文件占用', '学习你的删除习惯', '生成清理方案'];
+  const MIN = 1500 + Math.min(1200, root.cnt / 400);
+  // real work, in the background
+  const safe = safeCandidates();
+  const skipped = [], plan = [];
+  for (const x of safe) {
+    const hit = inUse(x);
+    if (hit) skipped.push({...x, app: hit[1]}); else plan.push(x);
+  }
+  let workP = 0, done = false;
+  habitCandidates(root, new Set(safe.map(x => x.n)), p => workP = p, A).then(h => { plan.push(...h); A.habits = h; done = true; });
+  const mid = n => (n.x0 + n.x1) / 2;
+  const order = safe.concat().sort((a, b) => mid(a.n) - mid(b.n));
+  A.locks = safe.concat().sort((a, b) => b.n.size - a.n.size).slice(0, 36);
+  await new Promise(res => {
+    const tick = now => {
+      if (A.cancel) return res();
+      const tf = (now - A.t0) / MIN;
+      A.k = Math.min(1, tf, done ? 1 : .55 + workP * .4);
+      let c = 0, sz = 0; for (const x of order) { if (mid(x.n) > A.k) break; c++; sz += x.n.size; }
+      const ph = PH[Math.min(3, (A.k * 4) | 0)];
+      $('#cleanSum').innerHTML = `<i class="spin"></i><span class="ph">${ph}…</span>已发现 <b>${num(c + (A.k >= .75 && A.habits ? A.habits.length : 0))}</b> 项 · ${fmt(sz)}`;
+      $('#anBar').style.transform = `scaleX(${A.k})`;
+      $('#bFree').style.setProperty('--p', A.k); $('#bFreeSz').textContent = Math.round(A.k * 100) + '%';
+      dirty = true;
+      if (A.k >= 1 && done) return res();
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  const finish = () => { anal = null; L.classList.remove('busy'); $('#anBar').style.transform = 'scaleX(0)'; $('#bFree').style.setProperty('--p', 0); dirty = true; refreshFreeBtn(); };
+  if (A.cancel) { finish(); toast('已停止分析，未删除任何内容'); return; }
+  A.k = 1; pulse = {t0: performance.now()};
+  $('#bFreeTxt').textContent = '开始清理'; $('#bFreeSz').textContent = fmt(plan.reduce((s, x) => s + x.n.size, 0));
+  const nh = plan.filter(x => x.habit).length, tot = plan.reduce((s, x) => s + x.n.size, 0);
+  $('#cleanSum').innerHTML = `<i></i><b>${fmt(tot)}</b>${num(plan.length)} 项${nh ? ` · <span class="hz">${nh} 项依据你的习惯</span>` : ''}${skipped.length ? ` · 跳过 ${skipped.length} 项（${[...new Set(skipped.map(x => x.app))].join('、')} 正在使用）` : ''}`;
+  setTimeout(() => { finish(); $('#bFree').disabled = true; draw(performance.now()); freeUp(plan); }, 420);
+}
+
+/* =========================================================================
+   Safety evaluation
+   ========================================================================= */
+function evaluate() {
+  radar = {t0: performance.now(), dur: 600, k: 0};
+  setColorMode('safety');
+  openEval();
+}
+function openEval() {
+  const scope = focus;
+  const cands = []; collect(scope, cands);
+  const safe = cands.filter(x => x.r.level === 'safe').sort((a, b) => b.n.size - a.n.size);
+  const habit = habitCandidatesSync(scope, new Set(safe.map(x => x.n))).sort((a, b) => b.n.size - a.n.size);
+  const hn = new Set(habit.map(x => x.n)), inHabit = n => { for (let a = n; a; a = a.parent) if (hn.has(a)) return true; return false; };
+  const review = cands.filter(x => x.r.level === 'review' && !inHabit(x.n) && !habit.some(h => { for (let a = h.n.parent; a; a = a.parent) if (a === x.n) return true; return false; })).sort((a, b) => b.n.size - a.n.size);
+  const s = levelSums(scope, {safe: 0, review: 0, risky: 0, protected: 0});
+  const all = [...safe, ...habit, ...review];
+  const checked = new Set([...safe, ...habit]);
+  const sheet = $('#scEvalIn');
+  const row = (x, i) => `<label class="evr"><input type="checkbox" data-i="${i}" ${checked.has(x) ? 'checked' : ''}><div class="n"><div>${esc(x.n.name)}</div><small>${x.habit ? `<span class="hz">依据你的习惯</span> · 你曾手动删除 ${x.habit.d} 个 ${esc(x.habit.label)}${x.habit.seed ? '（示例历史）' : ''}` : `${esc(x.r.tag)} · ${esc(x.r.reason)}`}</small></div><b>${fmt(x.n.size)}</b></label>`;
+  const tot = scope.size || 1, K = ['safe', 'review', 'risky', 'protected'];
+  sheet.innerHTML = `<div class="sh" data-st><button class="btn icon x" id="evClose" title="关闭（Esc）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button><h2>安全评估</h2><div class="scope">${esc(displayPath(scope))} · ${num(scope.cnt)} 个项目 · ${RULES.size + 1} 条规则</div></div>
+    <div class="ebar" data-st>${K.map(k => `<i style="width:${100 * s[k] / tot}%;background:${LV[k].c}"></i>`).join('')}</div>
+    <div class="elg" data-st>${K.map(k => `<div><i style="background:${LV[k].c}"></i>${LV[k].l} <b>${fmt(s[k])}</b></div>`).join('')}</div>
+    <div class="evl" id="evl" data-st>
+      <div class="evg">可安全清理 <em>${safe.length} 项</em><label data-g="safe">全选</label></div>
+      ${safe.map((x, i) => row(x, i)).join('') || '<div class="empty">没有发现可安全清理的项目</div>'}
+      ${habit.length ? `<div class="evg">依据你的习惯 <em>${habit.length} 项 · 学自你的手动删除</em><label data-g="habit">全选</label></div>${habit.map((x, i) => row(x, i + safe.length)).join('')}` : ''}
+      ${review.length ? `<details class="evd"><summary class="evg" style="display:flex">建议复核 <em>${review.length} 项 · 默认不选</em></summary>${review.map((x, i) => row(x, i + safe.length + habit.length)).join('')}</details>` : ''}
+    </div>
+    <div class="ft" data-st><div class="sum">已选 <b id="evN">0</b> 项，共 <b id="evS">0</b></div><span style="flex:1"></span>
+      <button class="btn" id="evCancel">取消</button><button class="btn primary" id="evGo">移至${P.trash}</button></div>`;
+  const upd = () => {
+    let n = 0, sz = 0; for (const x of checked) { n++; sz += x.n.size; }
+    $('#evN').textContent = n; $('#evS').textContent = fmt(sz);
+    $('#evGo').disabled = !n; $('#evGo').textContent = n ? `释放 ${fmt(sz)}` : `移至${P.trash}`;
+    evalHL = new Set([...checked].map(x => x.n)); dirty = true;     // the hero shows exactly what will go
+  };
+  upd();
+  $('#evl').onchange = e => { const x = all[+e.target.dataset.i]; if (e.target.checked) checked.add(x); else checked.delete(x); upd(); };
+  $('#evl').onclick = e => {
+    const g = e.target.closest('label[data-g]'); if (!g) return; e.preventDefault();
+    const grp = g.dataset.g === 'safe' ? safe : g.dataset.g === 'habit' ? habit : review; const allOn = grp.every(x => checked.has(x));
+    grp.forEach(x => allOn ? checked.delete(x) : checked.add(x));
+    sheet.querySelectorAll('input[data-i]').forEach(inp => inp.checked = checked.has(all[+inp.dataset.i])); upd();
+  };
+  $('#evCancel').onclick = $('#evClose').onclick = closeEval;
+  $('#evl').onmouseover = e => { const r = e.target.closest('.evr'); setHover(r ? all[+r.querySelector('input').dataset.i].n : null); };
+  $('#evl').onmouseleave = () => setHover(null);
+  $('#evGo').onclick = () => {
+    const sel = all.filter(x => checked.has(x));
+    if (colorMode !== 'safety') setColorMode('safety');
+    closeEval();
+    setTimeout(() => { draw(performance.now()); freeUp(sel); }, 360);
+  };
+  goScene('eval');
+}
+function closeEval() { setHover(null); goScene('explore'); }
+
+function safeCandidates() { const c = []; collect(root, c); return c.filter(x => x.r.level === 'safe'); }
+function refreshFreeBtn() {
+  if (anal) return 0;
+  const t0 = performance.now();
+  const all = safeCandidates(), c = all.filter(x => !inUse(x)), s = c.reduce((a, x) => a + x.n.size, 0), busy = all.length - c.length;
+  $('#bFreeTxt').textContent = s ? '自动清理' : '已清理干净';
+  $('#bFreeSz').textContent = s ? fmt(s) : '';
+  $('#bFree').disabled = !s;
+  $('#cleanSum').innerHTML = s ? `<i></i><b>${fmt(s)}</b> 可安全清理 · ${num(c.length)} 项` : `<i style="background:var(--t4)"></i>没有可安全清理的内容${busy ? `（${busy} 项正在使用，已跳过）` : ''}`;
+  return performance.now() - t0;
+}
+
+/* =========================================================================
+   Misc UI
+   ========================================================================= */
+/** Confirm as a message bubble that grows out of the panel's top-left corner; the panel behind it quiets down. */
+const ICON_BIN = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9.5 7V4.8h5V7M6.5 7l.9 12.2a1.5 1.5 0 0 0 1.5 1.3h6.2a1.5 1.5 0 0 0 1.5-1.3L17.5 7"/></svg>`;
+const ICON_WARN = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 8.5v4.5M12 16.4v.1"/><path d="M10.3 4.2 2.9 17.3A2 2 0 0 0 4.6 20h14.8a2 2 0 0 0 1.7-2.7L13.7 4.2a2 2 0 0 0-3.4 0Z" stroke-linejoin="round"/></svg>`;
+let askOpen = false;
+function confirmBox(title, html, okLabel, onOk, danger, icon) {
+  const el = $('#ask');
+  el.innerHTML = `<div class="ah"><div class="av${danger ? '' : ' n'}">${icon || (danger ? ICON_WARN : ICON_BIN)}</div><h3>${esc(title)}</h3></div>
+    <div class="ab">${html}</div><div class="af"><button class="btn" id="cfNo">取消</button><button class="btn ${danger ? 'danger' : 'primary'}" id="cfOk">${esc(okLabel)}</button></div>`;
+  el.getAnimations().forEach(a => a.cancel());
+  el.classList.add('on'); $('#right').classList.add('asking'); askOpen = true;
+  el.animate([{transform: 'translate(-6px,-6px) scale(.35)', opacity: 0, borderRadius: '4px 30px 30px 30px'},
+    {transform: 'scale(1.015)', opacity: 1, offset: .7}, {transform: 'none', opacity: 1}], {duration: 340, easing: 'cubic-bezier(.2,.9,.3,1.1)'});
+  [...el.querySelectorAll('.ah,.ab,.af')].forEach((c, i) => c.animate([{opacity: 0, transform: 'translateY(4px)'}, {opacity: 1, transform: 'none'}],
+    {duration: 240, delay: 90 + i * 45, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards'}));
+  $('#cfNo').onclick = askClose; $('#cfOk').onclick = () => { askClose(); onOk(); };
+  setTimeout(() => $('#cfOk') && $('#cfOk').focus({preventScroll: true}), 60);
+}
+function askClose() {
+  if (!askOpen) return; askOpen = false;
+  const el = $('#ask'); $('#right').classList.remove('asking');
+  el.animate([{transform: 'none', opacity: 1}, {transform: 'translate(-4px,-4px) scale(.6)', opacity: 0}], {duration: 170, easing: 'cubic-bezier(.4,0,1,1)'}).onfinish = () => { if (!askOpen) el.classList.remove('on'); };
+}
+document.addEventListener('pointerdown', e => { if (askOpen && !e.target.closest('#ask')) askClose(); }, true);
+function toast(msg, actions = [], ms = 3800) {
+  const el = document.createElement('div'); el.className = 'toast';
+  el.innerHTML = `<span>${esc(msg)}</span>`;
+  for (const [l, fn] of actions) { const b = document.createElement('button'); b.textContent = l; b.onclick = () => { fn(); kill(); }; el.appendChild(b); }
+  $('#toasts').appendChild(el);
+  const kill = () => { el.classList.add('out'); setTimeout(() => el.remove(), 260); };
+  setTimeout(kill, ms);
+  while ($('#toasts').children.length > 3) $('#toasts').firstChild.remove();
+}
+function segOn(sel, btn) { document.querySelectorAll(sel + ' button').forEach(b => b.classList.toggle('on', b === btn)); }
+function setColorMode(m) { colorMode = m; segOn('#cmode', $(`#cmode [data-m="${m}"]`)); dirty = true; renderLegend(); renderRows(); }
+$('#cmode').onclick = e => { const b = e.target.closest('button'); if (b) setColorMode(b.dataset.m); };
+function renderDisk() {
+  const used = root.size, tr = trashSize();
+  $('#dbU').style.width = (100 * used / capacity) + '%';
+  $('#dbT').style.width = (100 * tr / capacity) + '%';
+  $('#dVol').textContent = root.name;
+  $('#dTxt').innerHTML = `<b>${fmt(capacity - used - tr)}</b> 可用，共 ${fmt(capacity)}`;
+}
+function refreshNav() { renderCrumbs(); updateList(); renderDetail(); renderLegend(); dirty = true; }
+function refreshAll() {
+  refreshNav(); renderDisk(); renderTrashBadge(); renderTrashPop(); refreshFreeBtn();
+  $('#sNodes').textContent = num(root.cnt);
+}
+
+/* =========================================================================
+   Scan (simulated) & boot
+   ========================================================================= */
+function scan(key) {
+  if (anal) anal.cancel = true;
+  platKey = key; P = PLAT[key]; loadHist();
+  segOn('#plat', $(`#plat [data-p="${key}"]`));
+  goScene('explore', true);
+  trash.items = []; freedTotal = 0; $('#sFreed').textContent = '0 B';
+  compCache.clear();
+  const t0 = performance.now();
+  R = mulberry32(P.seed); UID = 0;
+  const r = P.build(scale);
+  finalize(r, null, 0, P.prefix);
+  const tBuild = performance.now() - t0;
+  const t1 = performance.now(); layout(r, 0, 1); const tLay = performance.now() - t1;
+  // pick a plausible capacity
+  capacity = [256, 512, 1024, 2048, 4096, 8192].map(x => x * GB).find(c => r.size < c * .9) || r.size * 1.2;
+  // scan overlay animation (the real Go scanner streams progress via events)
+  const sc = $('#scan'); sc.classList.add('on');
+  const paths = []; (function g(n, d) { if (paths.length > 400) return; if (d > 2 && R() < .02) paths.push(n); if (n.children) for (const c of n.children.slice(0, 20)) g(c, d + 1); })(r, 0);
+  const STATIC = location.hash.includes('static'); if (STATIC) document.body.classList.add('static');
+  const total = r.cnt, dur = STATIC ? 0 : 700, ts = performance.now();
+  root = null; tip.style.display = 'none';
+  const step = () => {
+    const t = dur ? Math.min(1, (performance.now() - ts) / dur) : 1, e = easeOut(t);
+    $('#scanNum').textContent = num(Math.round(total * e)) + ' 文件';
+    $('#scanBar').style.width = (e * 100) + '%';
+    const p = paths[(t * (paths.length - 1)) | 0]; if (p) $('#scanPath').textContent = displayPathFor(p, r);
+    if (t < 1) return requestAnimationFrame(step);
+    sc.classList.remove('on');
+    root = r; focus = r; selected = null; hover = null;
+    view = {x0: 0, x1: 1, d: 0}; zoom = morph = null; MT = 1;
+    intro = STATIC ? null : {t0: performance.now(), dur: 780, k: 0};
+    $('#sScan').textContent = tBuild.toFixed(0) + ' ms';
+    $('#sLayout').textContent = tLay.toFixed(1) + ' ms';
+    refreshAll();
+    if (STATIC) staticHook();
+  };
+  requestAnimationFrame(step);
+}
+function displayPathFor(n, r) { const parts = []; for (let a = n; a.parent; a = a.parent) parts.push(a.name); return P.rootPath + parts.reverse().join(P.sep); }
+
+$('#plat').onclick = e => { const b = e.target.closest('button'); if (b && b.dataset.p !== platKey) scan(b.dataset.p); };
+$('#bRescan').onclick = () => scan(platKey);
+$('#bEval').onclick = () => root && evaluate();
+$('#bFree').onclick = () => autoClean();
+$('#theme').onclick = e => { const b = e.target.closest('button'); if (b) setTheme(b.dataset.t); };
+setTheme(new URLSearchParams(location.hash.slice(1)).get('theme') || THEME);
+$('#bUp').onclick = $('#lUp').onclick = () => focus && focus.parent && zoomTo(focus.parent);
+$('#stress').onclick = () => { scale = scale === 1 ? 10 : 1; $('#stress').textContent = scale === 1 ? '压力测试 ×10' : '恢复正常规模'; scan(platKey); };
+
+document.addEventListener('keydown', e => {
+  if (askOpen) { if (e.key === 'Escape') askClose(); return; }
+  if (scene !== 'explore') { if (e.key === 'Escape') { setHover(null); closeScene(); } return; }
+  if (!root) return;
+  if (e.key === 'Escape' || (e.key === 'Backspace' && !e.metaKey)) { if (focus.parent) zoomTo(focus.parent); e.preventDefault(); }
+  if (e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) {
+    if (selected && selected !== focus && attached(selected)) requestTrash(selected, rowsEl.querySelector(`[data-id="${selected.id}"]`));
+  }
+  if (e.key === 'Enter' && selected && selected.children) zoomTo(selected);
+});
+
+const guess = /Win/i.test(navigator.platform) ? 'win' : /Linux/i.test(navigator.platform) ? 'linux' : 'mac';
+resize();
+scan(new URLSearchParams(location.hash.slice(1)).get('plat') || guess);
+function staticHook() {
+  const q = new URLSearchParams(location.hash.slice(1));
+  if (q.get('drill')) for (const name of q.get('drill').split('/')) { const c = focus.children.find(x => x.name === name); if (c) { focus = c; selected = c; } }
+  zoom = null; refreshNav();
+  if (q.get('mode')) setColorMode(q.get('mode'));
+  if (q.get('sel')) { const c = focus.children.find(x => x.name === q.get('sel')); if (c) select(c); }
+  dirty = true;
+  if (q.has('eval')) openEval();
+  if (q.has('free')) { const c = safeCandidates(); removeNodes(c.map(x => x.n)).forEach(it => it.fly = false); renderTrashBadge(); }
+  if (q.get('bin')) setBinStyle(q.get('bin'));
+  if (q.get('scene') === 'trash') goScene('trash', true);
+  if (q.has('ask')) emptyTrash(false);
+}
+</script>
+</body>
+</html>

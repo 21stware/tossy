@@ -1,0 +1,7 @@
+/bin/
+/dist/
+*.test
+*.prof
+.DS_Store
+/app/app
+/app/build/
