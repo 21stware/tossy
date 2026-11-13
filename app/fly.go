@@ -28,6 +28,7 @@ type ball struct {
 	start                      time.Time
 	dur                        time.Duration
 	pop                        bool
+	solo                       bool // one item thrown by hand: bigger, with a trail
 	keys                       []string
 }
 
@@ -102,6 +103,17 @@ func (a *app) throw(items []cleanItem, many bool) {
 	a.syncBin(a.trashEnts())
 	if !many || len(items) == 1 {
 		a.throwOne(srcs[0], items, keys, 0, 0)
+		if !many && len(items) == 1 && len(a.fly.balls) > 0 {
+			b := &a.fly.balls[len(a.fly.balls)-1]
+			b.solo = true
+			d := max(16, min(28, ballR(items[0].meta.Size, f.tier)*3.4))
+			b.endS *= b.d / d
+			b.d = d
+			if n := len(a.fly.morphs); n > 0 && a.fly.morphs[n-1].x == b.sx && a.fly.morphs[n-1].y == b.sy {
+				a.fly.morphs[n-1].d = d
+			}
+			b.dur = b.dur * 115 / 100
+		}
 		return
 	}
 	show := min(28, len(items))
@@ -283,10 +295,20 @@ func (a *app) paintFly(p *ui.Painter) {
 			sc = .85 + (b.endS-.85)*u
 			c = b.c0.Mix(b.c1, u)
 		}
+		if b.solo && t > f0 && t < f1 { // a short fading trail along the arc
+			for i := 1; i <= 4; i++ {
+				u := (t - f0 - float32(i)*.025) / (f1 - f0)
+				if u <= 0 {
+					break
+				}
+				a.paintBall(p, quad(b.sx, b.mx, b.tx, u), quad(b.sy, b.my, b.hy, u), b.d/2*(1-.15*u)*(1-.12*float32(i)), b.c0, .32-.07*float32(i))
+			}
+		}
 		a.paintBall(p, x, y, b.d/2*sc, c, op)
 	}
 	f.balls = keepB
 	a.paintBinFront(p)
+	a.paintBallTip(p)
 	// "已释放 X" rises off the bin after an empty
 	if !bs.freedT.IsZero() {
 		k := float64(now.Sub(bs.freedT)) / float64(1300*time.Millisecond)
@@ -305,7 +327,8 @@ func (a *app) paintFly(p *ui.Painter) {
 			T := &binTiers[bs.tier]
 			sp := ui.Span{Text: bs.freed, Size: 13, Weight: 600, Color: a.pal.level[0].Alpha(float32(op))}
 			w, _ := p.MeasureText(0, sp)
-			p.RichText(ox+T.w/2-w/2, oy+float32(dy), 0, sp)
+			hx, hy := bs.toHero(ox+T.w/2, oy)
+			p.RichText(hx-w/2, hy+float32(dy), 0, sp)
 			a.frame = true
 		}
 	}

@@ -46,6 +46,8 @@ type app struct {
 	t    *scan.Tree
 	ev   *safety.Evaluator
 	tsun trashSun // the trash scene's chart
+	rightTw tween   // the right column's width: wider in the trash scene
+	rightW  float32
 
 	ver int // bumped on every tree change, invalidates cached geometry and rows
 

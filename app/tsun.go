@@ -393,6 +393,7 @@ func (a *app) trashChartInput(chart ui.Element) {
 	s := &a.sun
 	dx, dy := float64(b.X+x-s.cx), float64(b.Y+y-s.cy)
 	r := float32(math.Hypot(dx, dy))
+	out := r > s.rad+24
 	if r < s.r0-3 {
 		ts.hot = true
 	} else {
@@ -417,7 +418,10 @@ func (a *app) trashChartInput(chart ui.Element) {
 	if ts.hl != nil {
 		chart.Tooltip(ts.hl.name + "\n" + fmtSize(ts.hl.size))
 	}
-	if chart.Clicked() && ts.hot {
+	if out {
+		chart.Tooltip("返回磁盘")
+	}
+	if chart.Clicked() && (ts.hot || (out && ts.hl == nil)) {
 		a.goScene(sceneBrowse)
 	}
 }

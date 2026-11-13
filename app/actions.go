@@ -178,13 +178,59 @@ func (a *app) landed(ents []pileEnt) (n int, size int64) {
 
 func (a *app) dock(c *ui.Context) {
 	pal := a.pal
+	f := &a.binS
 	ents := a.trashEnts()
 	a.syncBin(ents)
 	total := len(ents)
 	n, size := a.landed(ents)
-	T := &binTiers[a.binS.tier]
-	ui.Row(c.Key("dock")).Padding(12, 14, 10, 18).Gap(12).AlignItems(ui.End).Children(func() {
-		ui.Column(c).Grow(1).Shrink(1).Gap(1).Children(func() {
+	T := &binTiers[f.tier]
+	// the trash scene zooms the bin into a hero at the column's bottom centre
+	inT := a.scene == sceneTrash && a.bin != nil
+	W, H := c.Size()
+	hk := float32(0)
+	if inT {
+		hk = 1
+	}
+	k := float32(a.tweenTo(&f.heroTw, float64(hk), 550*time.Millisecond))
+	f.heroK = k
+	heroH := max(110, min(H*.27, 210))
+	cw := float32(rightW0)
+	if a.rightTw.set {
+		cw = float32(a.rightTw.to)
+	}
+	f.heroS = max(1, min(min(cw*.44, 260)/T.w, heroH/T.h, 3.2))
+	f.heroTX, f.heroTY = W-a.rightW/2, H-30
+	row := ui.Row(c.Key("dock")).Padding(12, 14, 10, 18).Gap(12).AlignItems(ui.End)
+	if f.textH > 0 {
+		nat := max(f.textH, T.h) + 22
+		row.Height(nat + (T.h*f.heroS+52-nat)*k)
+	}
+	// hover a ball of the hero bin: its row lights and scrolls into view, its arc lights
+	prev := f.hov
+	f.hov = ""
+	if inT && k > .9 {
+		if x, y, over := row.PointerPosition(); over {
+			b := row.Bounds()
+			if e, ok := a.hoverBall(b.X+x, b.Y+y); ok {
+				f.hov = e.key
+				if e.id != "" {
+					a.tsun.hlID = e.id
+				}
+				row.Cursor(ui.CursorPointer)
+			}
+		}
+	}
+	f.hovNew = f.hov != "" && f.hov != prev
+	if f.hov != prev {
+		a.frame = true
+	}
+	live := k < .3
+	row.Children(func() {
+		ui.Column(c.Key("dtext")).Grow(1).Shrink(1).Gap(1).Opacity(max(0, 1-k*1.8)).Draw(func(p *ui.Painter, r ui.Rect) {
+			if k == 0 {
+				f.textH = r.H
+			}
+		}).Children(func() {
 			title := trashName()
 			if total > 0 {
 				title += " · " + T.name
@@ -205,28 +251,31 @@ func (a *app) dock(c *ui.Context) {
 				if a.scene == sceneTrash {
 					label = "返回"
 				}
-				if a.btn(c.Key("view"), label, btnPlain, true, nil).Disabled(total == 0 && a.scene != sceneTrash).Clicked() {
+				if a.btn(c.Key("view"), label, btnPlain, true, nil).Disabled(total == 0 && a.scene != sceneTrash).Clicked() && live {
 					if a.scene == sceneTrash {
 						a.goScene(sceneBrowse)
 					} else {
 						a.goScene(sceneTrash)
 					}
 				}
-				if a.btn(c.Key("empty"), "清空", btnPlain, true, nil).Disabled(total == 0 || a.trashMoving > 0).Clicked() {
+				if a.btn(c.Key("empty"), "清空", btnPlain, true, nil).Disabled(total == 0 || a.trashMoving > 0).Clicked() && live {
 					a.ask = &askState{kind: askEmpty, t0: a.now}
 				}
 			})
 		})
-		bin := ui.Box(c.Key("bin")).Size(T.w, T.h).Shrink(0).Cursor(ui.CursorPointer).Draw(func(p *ui.Painter, r ui.Rect) {
+		bin := ui.Box(c.Key("bin")).Size(T.w, T.h).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
 			a.now = p.Now()
-			a.binS.right, a.binS.bottom = r.X+r.W, r.Y+r.H
-			a.paintBinBack(p, a.binS.ents)
+			f.right, f.bottom = r.X+r.W, r.Y+r.H
+			a.paintBinBack(p, f.ents)
 		})
-		if total > 0 {
-			bin.Tooltip("查看" + trashName())
-		}
-		if bin.Clicked() && total > 0 {
-			a.goScene(sceneTrash)
+		if !inT {
+			bin.Cursor(ui.CursorPointer)
+			if total > 0 {
+				bin.Tooltip("查看" + trashName())
+			}
+			if bin.Clicked() && total > 0 {
+				a.goScene(sceneTrash)
+			}
 		}
 	})
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"hash/fnv"
 	"math"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"time"
@@ -104,6 +105,29 @@ type binState struct {
 	ents    []pileEnt
 	entsAt  time.Time
 	shoveT0 time.Time
+
+	// the hero bin of the trash scene: the dock bin grows to the column's bottom centre
+	heroTw         tween
+	heroK, heroS   float32
+	heroTX, heroTY float32 // target bottom centre in the window
+	textH          float32 // the dock's text column, last frame
+	hov            string  // pile key under the pointer in the hero bin
+	hovNew         bool    // hov changed this frame: its row scrolls into view
+	rowHL          string  // pile key of the trash row under the pointer
+}
+
+// hero is the zoom from the dock slot: the slot's bottom centre, the scale and the shift.
+func (f *binState) hero() (bx, by, s, dx, dy float32) {
+	T := &binTiers[f.tier]
+	bx, by = f.right-T.w/2, f.bottom
+	k := f.heroK
+	return bx, by, 1 + (f.heroS-1)*k, (f.heroTX - bx) * k, (f.heroTY - by) * k
+}
+
+// toHero maps a point of the bin in its dock slot to where the hero bin shows it.
+func (f *binState) toHero(x, y float32) (float32, float32) {
+	bx, by, s, dx, dy := f.hero()
+	return bx + (x-bx)*s + dx, by + (y-by)*s + dy
 }
 
 type dumpBall struct {
@@ -334,9 +358,74 @@ func (a *app) binXform(p *ui.Painter, fn func(ox, oy float32)) {
 	if f.hot && T.lids == 0 {
 		sx, sy = sx*1.06, sy*1.06
 	}
-	p.Transform(ui.Translation(0, 1.5*b), 0, 0, func() {
-		p.Transform(ui.Scaling(sx, sy), ox+T.w/2, oy+T.h, func() { fn(ox, oy) })
+	inner := func() {
+		p.Transform(ui.Translation(0, 1.5*b), 0, 0, func() {
+			p.Transform(ui.Scaling(sx, sy), ox+T.w/2, oy+T.h, func() { fn(ox, oy) })
+		})
+	}
+	if f.heroK <= 0 {
+		inner()
+		return
+	}
+	bx, by, s, dx, dy := f.hero()
+	p.Transform(ui.Translation(dx, dy), 0, 0, func() {
+		p.Transform(ui.Scaling(s, s), bx, by, inner)
 	})
+}
+
+// hoverBall finds the pile ball under a window point in the hero bin.
+func (a *app) hoverBall(px, py float32) (pileEnt, bool) {
+	f := &a.binS
+	ox, oy := f.origin()
+	_, _, s, _, _ := f.hero()
+	for i := len(f.ents) - 1; i >= 0; i-- {
+		e := f.ents[i]
+		b, ok := f.pile[e.key]
+		if !ok || f.inflight[e.key] > 0 {
+			continue
+		}
+		x, y := f.toHero(ox+b.x, oy+b.y)
+		r := b.r*s + 2
+		if dx, dy := px-x, py-y; dx*dx+dy*dy <= r*r {
+			return e, true
+		}
+	}
+	return pileEnt{}, false
+}
+
+// paintBallTip labels the hovered ball of the hero bin: its name and size, above it.
+func (a *app) paintBallTip(p *ui.Painter) {
+	f := &a.binS
+	if f.hov == "" || f.heroK < .9 {
+		return
+	}
+	var ent pileEnt
+	for _, e := range f.ents {
+		if e.key == f.hov {
+			ent = e
+		}
+	}
+	b, ok := f.pile[f.hov]
+	if !ok || ent.key == "" {
+		return
+	}
+	pal := a.pal
+	ox, oy := f.origin()
+	_, _, s, _, _ := f.hero()
+	x, y := f.toHero(ox+b.x, oy+b.y)
+	name := clipText(p, filepath.Base(ent.key), 220, 12, 600)
+	info := fmtSize(ent.size) + " · " + levelTitles[max(0, min(3, ent.lv))]
+	w1, _ := p.MeasureText(0, ui.Span{Text: name, Size: 12, Weight: 600})
+	w2, _ := p.MeasureText(0, ui.Span{Text: info, Size: 10.5, Font: "monospace"})
+	w, h := max(w1, w2)+20, float32(42)
+	bx := max(f.heroTX-a.rightW/2+8, min(x-w/2, f.heroTX+a.rightW/2-8-w))
+	by := y - b.r*s*1.35 - 10 - h
+	p.Fill(ui.Rect{X: bx, Y: by, W: w, H: h}, pal.ink.Alpha(.12), 8)
+	p.Fill(ui.Rect{X: bx + .5, Y: by + .5, W: w - 1, H: h - 1}, pal.panel, 7.5)
+	lc := pal.level[max(0, min(3, ent.lv))]
+	p.FillPath((&ui.Path{}).Circle(bx+13, by+15, 3.5), lc)
+	p.RichText(bx+22, by+6, 0, ui.Span{Text: name, Size: 12, Weight: 600, Color: pal.text})
+	p.RichText(bx+10, by+23, 0, ui.Span{Text: info, Size: 10.5, Font: "monospace", Color: pal.t3})
 }
 
 // paintBinBack draws the inside of the bin and its pile (in the dock, under flying balls).
@@ -381,12 +470,21 @@ func (a *app) paintBinBack(p *ui.Painter, ents []pileEnt) {
 				a.frame = true
 				return
 			}
+			hl := f.hov
+			if hl == "" {
+				hl = f.rowHL
+			}
+			var hb *pileBall
 			for _, e := range ents {
 				if f.inflight[e.key] > 0 {
 					continue
 				}
 				b, ok := f.pile[e.key]
 				if !ok {
+					continue
+				}
+				if e.key == hl && f.heroK > 0 {
+					hb = &b
 					continue
 				}
 				x, y, sx, sy := ox+b.x, oy+b.y, float32(1), float32(1)
@@ -413,6 +511,11 @@ func (a *app) paintBinBack(p *ui.Painter, ents []pileEnt) {
 				} else {
 					a.paintBall(p, x, y, b.r, a.pal.level[b.lv], 1)
 				}
+			}
+			if hb != nil {
+				x, y, r := ox+hb.x, oy+hb.y, hb.r*1.35
+				a.paintBall(p, x, y, r, a.pal.level[hb.lv], 1)
+				p.StrokePath((&ui.Path{}).Circle(x, y, r+.6), 1.2, ui.RGBA(255, 255, 255, .92))
 			}
 		})
 	})

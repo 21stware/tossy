@@ -255,6 +255,29 @@ func TestViewFlow(t *testing.T) {
 		t.Errorf("trash panel: %v", tt.Texts())
 	}
 	shot(t, tt, "9-trash")
+	// the hero bin: zoomed, and a ball under the pointer lights its row and labels itself
+	if a.binS.heroK < .99 || a.binS.heroS <= 1 {
+		t.Errorf("hero bin not zoomed: k=%v s=%v", a.binS.heroK, a.binS.heroS)
+	}
+	{
+		f := &a.binS
+		ox, oy := f.origin()
+		for _, e := range f.ents {
+			if b, ok := f.pile[e.key]; ok {
+				x, y := f.toHero(ox+b.x, oy+b.y)
+				tt.Move(x, y)
+				tt.Advance(50 * time.Millisecond)
+				tt.Frame()
+				if f.hov != e.key {
+					t.Errorf("ball hover: got %q want %q", f.hov, e.key)
+				}
+				break
+			}
+		}
+		shot(t, tt, "9a-ballhover")
+		tt.Move(5, 5)
+		tt.Frame()
+	}
 	if r := a.tsun.root; r == nil || r.cnt != len(a.bin.List()) || len(a.tsun.arcs) == 0 {
 		t.Errorf("trash-origin chart not built: %+v", r)
 	}
@@ -296,13 +319,12 @@ func TestViewFlow(t *testing.T) {
 		t.Errorf("settings: %v", tt.Texts())
 	}
 	shot(t, tt, "10-settings")
-	tt.Click("完成")
-	tt.Advance(time.Second)
-
-	// classic theme
+	// classic theme, picked in settings (the footer switch is gone)
 	if err := tt.Click("经典"); err != nil {
 		t.Fatal(err)
 	}
+	tt.Click("完成")
+	tt.Advance(time.Second)
 	if err := tt.Click("目录"); err != nil {
 		t.Fatal(err)
 	}

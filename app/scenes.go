@@ -38,6 +38,7 @@ func (a *app) trashPanel(c *ui.Context) {
 	pal := a.pal
 	items := a.bin.List()
 	a.tsun.hlID = ""
+	a.binS.rowHL = ""
 	by := map[trash.Source][]trash.Item{}
 	sums := map[trash.Source]int64{}
 	var total int64
@@ -167,8 +168,13 @@ func (a *app) trashRow(c *ui.Context, it trash.Item) {
 	hot := r.Hovered()
 	if hot {
 		a.tsun.hlID = it.ID
+		a.binS.rowHL = it.Orig
 	}
-	if hot || (a.tsun.hl != nil && a.tsun.hl.hasItem(it.ID)) {
+	ball := a.binS.hov == it.Orig
+	if ball && a.binS.hovNew {
+		r.ScrollIntoView(ui.ScrollIntoViewOptions{Block: ui.ScrollNearest, Animation: &ui.Smooth})
+	}
+	if hot || ball || (a.tsun.hl != nil && a.tsun.hl.hasItem(it.ID)) {
 		r.Background(pal.hov)
 	}
 	r.Children(func() {

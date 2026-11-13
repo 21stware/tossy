@@ -30,6 +30,7 @@ func main() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Title: "FanFree", Width: 1280, Height: 820, MinWidth: 960, MinHeight: 620,
 			StateKey: "main", Content: ui.View(a.view),
+			TitleBarStyle: mygo.TitleBarHiddenInset,
 		})
 		a.startScan(root)
 	})
@@ -38,7 +39,7 @@ func main() {
 	}
 }
 
-const rightW = 400
+const rightW0 = 400
 
 func (a *app) view(c *ui.Context) {
 	a.now = c.Now()
@@ -72,8 +73,6 @@ func (a *app) view(c *ui.Context) {
 			ui.Box(c).Width(1).Background(pal.line)
 			a.rightPane(c)
 		})
-		ui.Box(c).Height(1).Background(pal.line)
-		a.footer(c)
 	})
 	ui.Box(c.Key("fly")).Absolute().Top(0).Left(0).Fill().PassThrough().ZIndex(50).Draw(func(p *ui.Painter, r ui.Rect) {
 		a.now = p.Now()
@@ -167,7 +166,10 @@ func (a *app) leftPane(c *ui.Context) {
 
 func (a *app) ltop(c *ui.Context) {
 	pal := a.pal
-	ui.Row(c.Key("ltop")).Padding(14, 16, 0, 18).Gap(8).AlignItems(ui.Center).Height(44).Children(func() {
+	// no title bar: the top strip clears the window controls and drags the window
+	bar := c.TitleBar()
+	top := max(float32(14), bar.Bottom-22)
+	ui.Row(c.Key("ltop")).Padding(top, 16, 0, 18+bar.Left).Gap(8).AlignItems(ui.Center).Height(30+top).DragWindow().Children(func() {
 		if a.t != nil && a.focus != 0 && !a.scanning {
 			up := ui.Row(c.Key("up")).Height(28).Padding(0, 9, 0, 4).Gap(2).Radius(7).AlignItems(ui.Center).
 				TextColor(pal.t2).Cursor(ui.CursorPointer).Tooltip("返回上级（Esc）").Shrink(0)
@@ -496,7 +498,13 @@ func (a *app) bigButton(c *ui.Context) {
 
 func (a *app) rightPane(c *ui.Context) {
 	pal := a.pal
-	ui.Column(c.Key("right")).Width(rightW).Shrink(0).Background(pal.panel).Children(func() {
+	W, _ := c.Size()
+	tw := float64(rightW0)
+	if a.scene == sceneTrash && a.bin != nil {
+		tw = float64(max(340, min(W*.46, 640)))
+	}
+	a.rightW = float32(a.tweenTo(&a.rightTw, tw, 550*time.Millisecond))
+	ui.Column(c.Key("right")).Width(a.rightW).Shrink(0).Background(pal.panel).Children(func() {
 		a.diskBar(c)
 		ui.Box(c).Height(1).Background(pal.line)
 		ui.Column(c.Key("scene")).Grow(1).Shrink(1).Clip().Children(func() {
@@ -535,7 +543,8 @@ func (a *app) diskBar(c *ui.Context) {
 	if a.t != nil {
 		vol = a.name(0)
 	}
-	ui.Column(c.Key("disk")).Padding(16, 18, 14, 18).Gap(9).Children(func() {
+	bar := c.TitleBar()
+	ui.Column(c.Key("disk")).Padding(16, 18+bar.Right, 14, 18).Gap(9).DragWindow().Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Height(26).Children(func() {
 			ui.Text(c, vol).FontWeight(600).SingleLine().Ellipsis("…").Grow(1).Shrink(1)
 			if a.btn(c.Key("rescan"), "", btnGhost, true, func() { a.rescanIcon(c) }).Tooltip("重新扫描").
@@ -578,29 +587,3 @@ func (a *app) rescanIcon(c *ui.Context) {
 
 // ------------------------------------------------------------------------------------------
 
-func (a *app) footer(c *ui.Context) {
-	pal := a.pal
-	labels := make([]string, len(palettes))
-	for i, p := range palettes {
-		labels[i] = p.label
-	}
-	ui.Row(c.Key("footer")).Padding(6, 16).Gap(14).AlignItems(ui.Center).Height(36).FontSize(11.5).Children(func() {
-		ui.Segmented(c.Key("theme"), &a.palIdx, labels...)
-		if a.t != nil {
-			stat := func(k, v string) {
-				ui.Row(c.Key(k)).Gap(4).Children(func() {
-					ui.Text(c, k).TextColor(pal.t4)
-					ui.Text(c, v).TextColor(pal.t3).Font(pal.mono)
-				})
-			}
-			stat("节点", fmtNum(int64(len(a.t.Nodes))))
-			stat("扫描", fmt.Sprintf("%.1fs", float64(a.t.Stats.Millis)/1000))
-			stat("绘制", fmt.Sprintf("%.1fms · %d 扇区", a.drawMs, a.arcCount))
-		}
-		ui.Spacer(c)
-		ui.Row(c.Key("freed")).Gap(4).Children(func() {
-			ui.Text(c, "已释放").TextColor(pal.t4)
-			ui.Text(c, fmtSize(a.freedTotal)).FontWeight(600).TextColor(pal.level[safety.Safe]).Font(pal.mono)
-		})
-	})
-}
