@@ -5,8 +5,10 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -14,7 +16,6 @@ import (
 
 	"github.com/fanfree/fanfree/engine/safety"
 	"github.com/fanfree/fanfree/engine/scan"
-	"github.com/fanfree/fanfree/engine/trash"
 )
 
 func main() {
@@ -62,6 +63,9 @@ func (a *app) view(c *ui.Context) {
 	if a.scanning {
 		c.After(150 * time.Millisecond)
 	}
+	if c.Shortcut(ui.Cmd, ui.KeyComma) && !a.showSettings && a.ask == nil { // ⌘, (Ctrl+, elsewhere)
+		a.showSettings = true
+	}
 	a.keys(c)
 	a.hover, a.hoverAgg, a.centerHot = scan.None, nil, false
 
@@ -69,19 +73,27 @@ func (a *app) view(c *ui.Context) {
 	c.Root().Background(pal.bg)
 	ui.Column(c).Fill().TextColor(pal.text).FontSize(13).Children(func() {
 		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
+			a.sizeRight(c)
 			a.leftPane(c)
-			ui.Box(c).Width(1).Background(pal.line)
 			a.rightPane(c)
 		})
 	})
+	if a.shown { // the disk line, at the top centre of the window
+		dx, _ := a.diskSpot(c)
+		ui.Box(c.Key("diskw")).Absolute().Top(topY(c) + 1).Left(dx).ZIndex(5).Children(func() {
+			a.diskBar(c).Opacity(1 - .82*a.askK)
+		})
+	}
 	ui.Box(c.Key("fly")).Absolute().Top(0).Left(0).Fill().PassThrough().ZIndex(50).Draw(func(p *ui.Painter, r ui.Rect) {
 		a.now = p.Now()
 		a.paintFly(p)
 		a.paintDrag(p)
 	})
 	a.dialogs(c)
+	// rebuild in step with the display (120Hz on ProMotion), not on a 16ms timer that beats
+	// against the refresh and drops frames
 	if a.frame || a.fly.active() || len(a.binS.inflight) > 0 {
-		c.After(16 * time.Millisecond)
+		c.AnimationFrame()
 	}
 }
 
@@ -100,10 +112,10 @@ func (a *app) keys(c *ui.Context) {
 		switch {
 		case a.anal != nil:
 			a.cancelAnalysis()
-		case a.scene == sceneEval:
-			a.closeEval()
 		case a.scene != sceneBrowse:
 			a.goScene(sceneBrowse)
+		case a.pf != pfNone:
+			a.pf = pfNone
 		default:
 			up()
 		}
@@ -144,9 +156,25 @@ func (a *app) keys(c *ui.Context) {
 // left: crumbs, chart, clean bar
 
 func (a *app) leftPane(c *ui.Context) {
+	// the trash scene quiets the left side: crumbs, tabs and the clean bar fade, a title comes in
+	tv := 0.0
+	if a.scene == sceneTrash && a.bin != nil && a.t != nil {
+		tv = 1
+	}
+	a.tvOn = tv == 1
+	a.tvK = max(0, min(1, float32(a.springTo(&a.tvSp, tv))))
+	// the chart shows safety only while the auto clean analyses (no tab for it any more)
+	if a.anal != nil {
+		a.mode = modeSafety
+	} else if !a.keepMode {
+		a.mode = modeStructure
+	}
 	ui.Column(c).Grow(1).Shrink(1).Children(func() {
 		a.ltop(c)
-		chart := ui.Box(c.Key("chart")).Grow(1).Clip().Draw(a.paintSun).Children(func() {
+		chart := ui.Box(c.Key("chart")).Grow(1).Clip().Draw(func(p *ui.Painter, r ui.Rect) {
+			a.chartR = r
+			a.paintSun(p, r)
+		}).Children(func() {
 			ui.Box(c.Key("hud")).Absolute().Top(0).Left(0).Fill().PassThrough().Draw(a.paintHUD)
 			switch {
 			case a.scene == sceneTrash && a.bin != nil && a.t != nil:
@@ -154,13 +182,24 @@ func (a *app) leftPane(c *ui.Context) {
 			case a.mode == modeSafety && a.t != nil:
 				a.legend(c)
 			}
+			if a.shown && a.chartR.W > 0 { // the bin, in the chart's bottom-right corner
+				a.dock(c)
+			} else {
+				a.binS.right, a.binS.hov = 0, ""
+			}
 		})
 		if a.scene == sceneTrash && a.bin != nil && a.t != nil {
 			a.trashChartInput(chart)
 		} else {
 			a.chartInput(chart)
+			if chart.PressedInside() { // the chart takes the room back
+				a.pf = pfNone
+			}
 		}
-		a.lbot(c)
+		bot := a.lbot(c)
+		if a.tvK > 0 {
+			bot.Opacity(1 - a.tvK)
+		}
 	})
 }
 
@@ -168,30 +207,55 @@ func (a *app) ltop(c *ui.Context) {
 	pal := a.pal
 	// no title bar: the top strip clears the window controls and drags the window
 	bar := c.TitleBar()
-	top := max(float32(14), bar.Bottom-22)
-	ui.Row(c.Key("ltop")).Padding(top, 16, 0, 18+bar.Left).Gap(8).AlignItems(ui.Center).Height(30+top).DragWindow().Children(func() {
-		if a.t != nil && a.focus != 0 && !a.scanning {
-			up := ui.Row(c.Key("up")).Height(28).Padding(0, 9, 0, 4).Gap(2).Radius(7).AlignItems(ui.Center).
-				TextColor(pal.t2).Cursor(ui.CursorPointer).Tooltip("返回上级（Esc）").Shrink(0)
-			up.Children(func() {
-				icon(c, icoBack, 16, pal.t2, 2)
-				ui.Text(c, a.name(a.t.Nodes[a.focus].Parent)).FontSize(12.5).SingleLine().MaxWidth(120).Ellipsis("…")
+	top := topY(c)
+	tv := a.tvK
+	// the crumbs and the trash title stop short of the disk line at the top centre
+	navMax := float32(1e4)
+	if a.shown {
+		dx, _ := a.diskSpot(c)
+		navMax = max(80, dx-18-bar.Left-16)
+	}
+	live := !a.tvOn && a.anal == nil
+	ui.Row(c.Key("ltop")).Padding(top, 16, 0, 18+bar.Left).Gap(8).AlignItems(ui.Center).Height(30 + top).DragWindow().Children(func() {
+		ui.Row(c.Key("lnav")).Gap(8).AlignItems(ui.Center).Shrink(1).MaxWidth(navMax).Clip().Opacity(1 - tv).Children(func() {
+			showUp := a.t != nil && a.focus != 0 && !a.scanning
+			if showUp && !a.upOn {
+				a.upT0 = a.now // the up button slides in from the left
+			}
+			a.upOn = showUp
+			if showUp {
+				up := ui.Row(c.Key("up")).Height(28).Padding(0, 9, 0, 4).Gap(2).Radius(7).AlignItems(ui.Center).
+					TextColor(pal.t2).Cursor(ui.CursorPointer).Tooltip("返回上级（Esc）").Shrink(0)
+				up.Children(func() {
+					icon(c, icoBack, 16, pal.t2, 2)
+					ui.Text(c, a.name(a.t.Nodes[a.focus].Parent)).FontSize(12.5).SingleLine().MaxWidth(120).Ellipsis("…")
+				})
+				if k := a.progress(a.upT0, 0, 220*time.Millisecond); k < 1 {
+					e := float32(easeStd(k))
+					up.Opacity(e).Translate(-6*(1-e), 0)
+				}
+				if up.Hovered() && live {
+					up.Background(pal.hov).TextColor(pal.text)
+				}
+				if up.Clicked() && live {
+					a.zoomTo(a.t.Nodes[a.focus].Parent)
+				}
+			}
+			a.crumbs(c)
+		})
+		if tv > 0 { // the trash scene's title, where the crumbs were
+			ui.Row(c.Key("tvt")).Absolute().Left(18 + bar.Left).MaxWidth(navMax).Top(top).Height(30).Gap(10).AlignItems(ui.Center).
+				Opacity(tv).PassThrough().Children(func() {
+				ui.Text(c, trashName()+"里的内容来自哪里").FontSize(13).FontWeight(600).SingleLine().Shrink(0)
+				ui.Text(c, a.trashSummary()).FontSize(12).TextColor(pal.t3).SingleLine().TruncateMiddle().Shrink(1)
 			})
-			if up.Hovered() {
-				up.Background(pal.hov).TextColor(pal.text)
-			}
-			if up.Clicked() && a.anal == nil {
-				a.zoomTo(a.t.Nodes[a.focus].Parent)
-			}
 		}
-		a.crumbs(c)
 		ui.Spacer(c)
-		ui.Segmented(c.Key("mode"), &a.mode, "目录", "安全性").Disabled(a.anal != nil)
 		if a.btn(c.Key("open"), "", btnGhost, false, func() { icon(c, icoFolder, 16, pal.t2, 1.7) }).
-			Tooltip("选择文件夹…").Disabled(a.anal != nil).Clicked() {
+			Tooltip("选择文件夹…").Disabled(a.anal != nil).Opacity(1-tv).Clicked() && !a.tvOn {
 			a.pickFolder("选择要分析的文件夹", a.startScan)
 		}
-		if a.btn(c.Key("settings"), "设置", btnPlain, false, nil).Tooltip("设置（⌘,）").Clicked() {
+		if a.btn(c.Key("settings"), "设置", btnPlain, false, nil).Tooltip("设置（"+settingsKey()+"）").Opacity(1-tv).Clicked() && !a.tvOn {
 			a.showSettings = true
 		}
 	})
@@ -220,7 +284,7 @@ func (a *app) crumbs(c *ui.Context) {
 			if t.Hovered() {
 				t.TextColor(pal.text).Background(pal.hov)
 			}
-			if t.Clicked() && a.anal == nil {
+			if t.Clicked() && a.anal == nil && !a.tvOn {
 				a.zoomTo(n)
 			}
 		}
@@ -272,7 +336,7 @@ func (a *app) chartInput(chart ui.Element) {
 			a.zoomTo(a.t.Nodes[a.focus].Parent)
 		case a.hover != scan.None:
 			n := a.hover
-			if a.t.Nodes[n].IsDir() && a.t.Nodes[n].First != scan.None && a.scene != sceneEval {
+			if a.t.Nodes[n].IsDir() && a.t.Nodes[n].First != scan.None {
 				a.zoomTo(n)
 			}
 			a.selected = n
@@ -338,81 +402,27 @@ var levelTitles = [4]string{"可安全清理", "建议复核后清理", "个人�
 // levelNames are the short forms.
 var levelNames = [4]string{"可清理", "需复核", "个人数据", "系统保护"}
 
-// lbot is the clean bar: what can go, 查看评估 and the big 自动清理 button.
-func (a *app) lbot(c *ui.Context) {
+// lbot is the clean bar: the big 自动清理 button, centred, with what it would take on it.
+func (a *app) lbot(c *ui.Context) ui.Element {
 	pal := a.pal
 	an := a.anal
 	k := float32(0)
 	if an != nil {
 		k = float32(an.k)
 	}
-	ui.Column(c.Key("lbot")).Children(func() {
+	return ui.Column(c.Key("lbot")).Children(func() {
 		// the analysis progress line along the top edge
 		ui.Box(c.Key("anbar")).Height(2).Draw(func(p *ui.Painter, r ui.Rect) {
 			if k > 0 {
 				p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W * k, H: r.H}, pal.level[safety.Safe].Alpha(.55), 0)
 			}
 		})
-		ui.Row(c).Padding(10, 16, 16, 20).Gap(10).AlignItems(ui.Center).Children(func() {
-			a.cleanSum(c)
-			if a.btn(c.Key("eval"), "查看评估", btnPlain, false, nil).Disabled(a.t == nil || a.scanning || an != nil).Clicked() {
-				a.evaluate()
-			}
+		ui.Row(c).Padding(12, 16, 22, 16).Justify(ui.Center).Children(func() {
 			a.bigButton(c)
 		})
-	})
-}
-
-func (a *app) cleanSum(c *ui.Context) {
-	pal := a.pal
-	dot := func(col ui.Color) { ui.Box(c).Size(7, 7).Radius(3.5).Background(col).Shrink(0) }
-	b := func(s string) ui.Element {
-		return ui.Text(c, s).FontSize(15).FontWeight(600).TextColor(pal.text).SingleLine()
-	}
-	t := func(s string) ui.Element { return ui.Text(c, s).TextColor(pal.t3).SingleLine().Shrink(1).Ellipsis("…") }
-	ui.Row(c.Key("cs")).Grow(1).Shrink(1).Gap(7).AlignItems(ui.Center).FontSize(12.5).Children(func() {
-		an := a.anal
-		switch {
-		case a.scanning:
-			a.spinner(c, 11, pal.t3)
-			t("正在扫描…")
-		case a.t == nil:
-			dot(pal.t4)
-			t("没有扫描结果")
-		case an != nil && an.doneAt.IsZero():
-			a.spinner(c, 11, pal.level[safety.Safe])
-			ui.Text(c, an.phase()+"…").TextColor(pal.t2).SingleLine()
-			t(fmt.Sprintf("已发现 %s 项 · %s", fmtNum(int64(an.found)), fmtSize(an.foundSz)))
-		case an != nil:
-			dot(pal.level[safety.Safe])
-			b(fmtSize(planSize(an.plan)))
-			nh := 0
-			for _, it := range an.plan {
-				if it.meta.Source == trash.ByHabit {
-					nh++
-				}
-			}
-			s := fmtNum(int64(len(an.plan))) + " 项"
-			ui.Text(c, s).TextColor(pal.t3).SingleLine()
-			if nh > 0 {
-				ui.Text(c, fmt.Sprintf("· %d 项依据你的习惯", nh)).TextColor(pal.level[safety.Review]).SingleLine()
-			}
-			if an.skipped > 0 {
-				t(fmt.Sprintf("· 跳过 %d 项（%s 正在使用）", an.skipped, joinCN(an.apps)))
-			}
-		default:
-			items, busy := a.idlePlan()
-			if s := planSize(items); s > 0 {
-				dot(pal.level[safety.Safe])
-				b(fmtSize(s))
-				t("可安全清理 · " + fmtNum(int64(len(items))) + " 项")
-			} else {
-				dot(pal.t4)
-				msg := "没有可安全清理的内容"
-				if busy > 0 {
-					msg += fmt.Sprintf("（%d 项正在使用，已跳过）", busy)
-				}
-				t(msg)
+		if a.tvOn { // faded in the trash scene: a click here leads back, not to the hidden buttons
+			if ui.Box(c.Key("lbotx")).Absolute().Top(0).Left(0).Fill().Clicked() {
+				a.goScene(sceneBrowse)
 			}
 		}
 	})
@@ -434,23 +444,37 @@ func joinCN(s []string) string {
 func (a *app) bigButton(c *ui.Context) {
 	pal := a.pal
 	an := a.anal
-	var label, chip string
+	var label, chip, tip string
 	busy, disabled := false, false
 	k := float32(0)
 	switch {
 	case an != nil && an.doneAt.IsZero():
-		label, chip, busy, k = "停止分析", fmt.Sprintf("%d%%", int(an.k*100)), true, float32(an.k)
+		label, busy, k = an.phase()+"…", true, float32(an.k)
+		chip = fmtNum(int64(an.found)) + " 项 · " + fmtSize(an.foundSz)
+		tip = "停止分析（Esc）"
 	case an != nil:
-		label, chip = "开始清理", fmtSize(planSize(an.plan))
+		label, chip = "正在清理", fmtSize(planSize(an.plan))+" · "+fmtNum(int64(len(an.plan)))+" 项"
+		if an.skipped > 0 {
+			tip = fmt.Sprintf("跳过 %d 项（%s 正在使用）", an.skipped, joinCN(an.apps))
+		}
 	default:
-		items, _ := a.idlePlan()
+		items, skipped := a.idlePlan()
 		if s := planSize(items); s > 0 {
-			label, chip = "自动清理", fmtSize(s)
+			label, chip = "自动清理", fmtSize(s)+" · "+fmtNum(int64(len(items)))+" 项"
+			if a.sz == szCompact {
+				chip = fmtSize(s)
+			}
+			tip = "把可安全清理的内容移到" + trashName() + "，清空前都可以还原"
 		} else {
 			label, disabled = "已清理干净", true
 		}
+		if skipped > 0 {
+			tip = fmt.Sprintf("%d 项正在使用，已跳过", skipped)
+		}
 		disabled = disabled || a.t == nil || a.scanning
-		if a.scanning || a.t == nil {
+		if a.scanning {
+			label, chip = "正在扫描…", ""
+		} else if a.t == nil {
 			label, chip = "自动清理", ""
 		}
 	}
@@ -461,68 +485,327 @@ func (a *app) bigButton(c *ui.Context) {
 	if disabled {
 		bg, fg = pal.panel2, pal.t3
 	}
-	e := ui.Row(c.Key("bFree")).Height(46).Padding(0, 14, 0, 16).Gap(8).Radius(13).AlignItems(ui.Center).
+	e := ui.Row(c.Key("bFree")).Height(48).Padding(0, 10, 0, 18).Gap(9).Radius(24).AlignItems(ui.Center).
 		Background(bg).TextColor(fg).Cursor(ui.CursorPointer).Shrink(0).Clip().
 		Draw(func(p *ui.Painter, r ui.Rect) {
-			if busy && k > 0 {
-				p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W * k, H: r.H}, pal.level[safety.Safe].Alpha(.22), 0)
-			}
+			p.Clip(r, r.H/2, func() { // the element's Clip covers its children, not its own paint
+				safe := pal.level[safety.Safe]
+				if busy {
+					// stripes drifting along while the sweep runs
+					off := float32(p.Now().Sub(a.anal.t0)%(800*time.Millisecond)) / float32(800*time.Millisecond) * 22
+					var st ui.Path
+					for x := r.X - r.H - 22 + off; x < r.X+r.W+r.H; x += 22 {
+						st.MoveTo(x, r.Y+r.H).LineTo(x+r.H*.47, r.Y)
+					}
+					p.StrokePath(&st, 10, safe.Alpha(.07))
+					p.AnimationFrame()
+				}
+				if busy && k > 0 {
+					p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W * k, H: r.H}, safe.Alpha(.22), 0)
+				}
+				// the sheen sweeps across once each time the pointer comes over it
+				if sk := a.progress(a.sheenT0, 0, 700*time.Millisecond); !a.sheenT0.IsZero() && sk < 1 {
+					x := r.X + r.W*float32(-1.2+2.4*ease(sk))
+					p.FillGradient(ui.Rect{X: x, Y: r.Y, W: r.W, H: r.H}, ui.LinearGradient{Angle: 105, Stops: []ui.GradientStop{
+						{Color: ui.RGBA(255, 255, 255, 0), At: .35}, {Color: ui.RGBA(255, 255, 255, .55), At: .5}, {Color: ui.RGBA(255, 255, 255, 0), At: .65}}}, 0)
+					p.AnimationFrame()
+				}
+			})
 		})
 	e.Children(func() {
-		icon(c, icoSparkle, 17, fg, 1.9)
+		if busy || a.scanning {
+			a.spinner(c, 13, fg)
+		} else {
+			icon(c, icoSparkle, 17, fg, 1.9)
+		}
 		ui.Text(c, label).FontSize(14.5).FontWeight(600).SingleLine()
 		if chip != "" {
 			chipBg := ui.RGBA(0, 0, 0, 1).Alpha(.11)
 			if busy || disabled {
 				chipBg = pal.text.Alpha(.08)
 			}
-			ui.Text(c, chip).FontSize(12).Font(pal.mono).Padding(3, 7).Radius(8).Background(chipBg).SingleLine()
+			ui.Text(c, chip).FontSize(12).Font(pal.mono).Padding(4, 10).Radius(12).Background(chipBg).SingleLine()
+		} else {
+			ui.Box(c).Width(4)
 		}
 	})
+	if tip != "" {
+		e.Tooltip(tip)
+	}
+	// the press bursts: the button pops and a ring of sparks flies out from under it
+	if bk := a.progress(a.burstT0, 0, 700*time.Millisecond); !a.burstT0.IsZero() && bk < 1 {
+		s := 1 + .06*float32(math.Sin(math.Pi*min(1, bk*2.2)))
+		e.Scale(s, s)
+		ui.Box(c.Key("burst")).Absolute().Left(-90).Right(-90).Top(-70).Bottom(-70).PassThrough().ZIndex(5).
+			Draw(func(p *ui.Painter, r ui.Rect) { a.paintBurst(p, r, bk) })
+	}
 	if disabled {
 		e.Disabled(true).DimDisabled(false).Cursor(ui.CursorDefault)
+		a.sheenOn = false
 		return
 	}
-	if e.Pressed() {
-		e.Scale(.985, .985)
-	} else if e.Hovered() {
-		e.Translate(0, -1).Shadow(0, 6, 16, -6, ui.RGBA(0, 0, 0, 1).Alpha(.35))
+	hot := e.Hovered()
+	if hot && !a.sheenOn && !busy {
+		a.sheenT0 = a.now
+	}
+	a.sheenOn = hot
+	// a plain lift, not a coloured halo: a tight contact shadow plus a soft one further down
+	shade := ui.RGBA(0, 0, 0, 1)
+	switch {
+	case busy:
+		e.Shadow(0, 2, 6, 0, shade.Alpha(.12))
+	case e.Pressed():
+		e.Translate(0, 1).Scale(.985, .985).Shadow(0, 1, 3, 0, shade.Alpha(.18))
+	case hot:
+		e.Translate(0, -1).Shadow(0, 6, 16, -4, shade.Alpha(.22))
+	default:
+		e.Shadow(0, 3, 10, -3, shade.Alpha(.16))
+	}
+	if e.PressedInside() && !busy && an == nil && a.motion() {
+		a.burstT0 = a.now
 	}
 	if e.Clicked() {
 		a.autoClean()
 	}
 }
 
+// paintBurst draws the sparks and the ring of the clean button's press, k from 0 to 1.
+func (a *app) paintBurst(p *ui.Painter, r ui.Rect, k float64) {
+	cx, cy := r.X+r.W/2, r.Y+r.H/2
+	safe := a.pal.level[safety.Safe]
+	e := float32(easeOut(k))
+	fade := float32(1 - k)
+	// the ring
+	rw, rh := 80+120*e, 24+70*e
+	var ring ui.Path
+	for i := 0; i <= 48; i++ {
+		t := float64(i) / 48 * 2 * math.Pi
+		x, y := cx+rw*float32(math.Cos(t)), cy+rh*float32(math.Sin(t))
+		if i == 0 {
+			ring.MoveTo(x, y)
+		} else {
+			ring.LineTo(x, y)
+		}
+	}
+	p.StrokePath(&ring, 2*fade+.5, safe.Alpha(.5*fade))
+	// the sparks: two rings, the inner slower, each a short streak along its way
+	const n = 22
+	for i := 0; i < n; i++ {
+		ang := float64(i)/n*2*math.Pi + float64(i%2)*.14
+		sp := float32(1)
+		if i%2 == 1 {
+			sp = .72
+		}
+		d0, d1 := (60+110*e)*sp, (60+110*e)*sp-18*fade
+		ca, sa := float32(math.Cos(ang)), float32(math.Sin(ang))*.62
+		var st ui.Path
+		st.MoveTo(cx+ca*d1, cy+sa*d1).LineTo(cx+ca*d0, cy+sa*d0)
+		col := safe
+		if i%3 == 0 {
+			col = a.pal.text
+		}
+		p.StrokePath(&st, 2.4*fade+.4, col.Alpha(.85*fade))
+	}
+	p.AnimationFrame()
+}
+
 // ------------------------------------------------------------------------------------------
 // right: disk, list, detail, dock
 
+// The right column is a two-dimensional accordion of three panels: the list, the selection's
+// detail and the trash. The one in focus (by a press inside it) widens the column and takes the
+// height; the others squeeze down to their headers. With none in focus the column is narrow
+// and the panels small. Every size follows a spring, so a change of mind mid-way just bends.
+const (
+	pfNone = iota
+	pfList
+	pfDetail
+)
+
+const (
+	listMin   = 64 // a squeezed list: its header
+	detailMin = 46 // a squeezed detail: the name
+	detailSum = 74 // the detail as a summary: name, size and verdict
+)
+
+// Window size classes: each has its own column widths and its own density.
+const (
+	szCompact = iota // under 1120pt: the chart keeps the room, the column is a slim strip
+	szRegular
+	szWide // 1520pt and up: wider panels with an extra column of facts
+)
+
+func sizeClass(W float32) int {
+	switch {
+	case W < 1120:
+		return szCompact
+	case W >= 1520:
+		return szWide
+	}
+	return szRegular
+}
+
+// panelWidth is one panel's width in a size class: wide when it has focus, slim when not.
+// Each panel follows its own spring; the column is as wide as its widest panel, so the chart
+// beside a slim panel keeps the room.
+func panelWidth(sz int, focus, trash bool) float32 {
+	switch {
+	case focus && trash:
+		return [3]float32{292, 352, 420}[sz]
+	case focus:
+		return [3]float32{276, 340, 420}[sz]
+	}
+	return [3]float32{168, 200, 236}[sz]
+}
+
+// sizeRight sets the panels' widths for this frame: none before the first scan finishes, then
+// pushed in from the right.
+func (a *app) sizeRight(c *ui.Context) {
+	W, _ := c.Size()
+	a.winW = W
+	a.sz = sizeClass(W)
+	if a.t != nil && !a.scanning && !a.shown {
+		a.shown, a.rightEnter = true, true
+		a.slimT0 = a.now
+	}
+	inT := a.sceneOn() == sceneTrash
+	slim := inT || a.pf != pfList // the list in its short form unless it has the focus
+	if slim != a.slim {
+		a.slim, a.slimT0 = slim, a.now // the panels' contents change form: let them rise in
+	}
+	if full := a.pf == pfDetail && !inT; full != a.detFull {
+		a.detFull, a.detT0 = full, a.now
+	}
+	var tL, tD, tT float32
+	if a.shown {
+		tL = panelWidth(a.sz, !inT && a.pf == pfList, false)
+		tD = panelWidth(a.sz, !inT && a.pf == pfDetail, false)
+		tT = panelWidth(a.sz, inT, true)
+	}
+	a.wL = float32(a.springTo(&a.wLsp, float64(tL)))
+	a.wD = float32(a.springTo(&a.wDsp, float64(tD)))
+	a.wT = float32(a.springTo(&a.wTsp, float64(tT)))
+	a.wTto = tT
+	a.rightTo = max(tL, tD, tT)
+	if a.rightEnter { // the first push: the column slides, the panels keep their final widths
+		a.rightW = max(0, float32(a.springTo(&a.rightSp, float64(a.rightTo))))
+		a.wL, a.wD, a.wT = tL, tD, tT
+		if math.Abs(float64(a.rightW-a.rightTo)) < .5 {
+			a.rightEnter = false
+		}
+	} else {
+		a.rightW = max(0, a.wL, a.wD, a.wT)
+		a.rightSp.snap(float64(a.rightW))
+	}
+}
+
 func (a *app) rightPane(c *ui.Context) {
 	pal := a.pal
-	W, _ := c.Size()
-	tw := float64(rightW0)
-	if a.scene == sceneTrash && a.bin != nil {
-		tw = float64(max(340, min(W*.46, 640)))
+	_, H := c.Size()
+	if a.rightW < .5 {
+		return
 	}
-	a.rightW = float32(a.tweenTo(&a.rightTw, tw, 550*time.Millisecond))
-	ui.Column(c.Key("right")).Width(a.rightW).Shrink(0).Background(pal.panel).Children(func() {
-		a.diskBar(c)
-		ui.Box(c).Height(1).Background(pal.line)
-		ui.Column(c.Key("scene")).Grow(1).Shrink(1).Clip().Children(func() {
-			switch {
-			case a.scene == sceneEval && a.eval != nil && a.t != nil:
-				a.evalPanel(c)
-			case a.scene == sceneTrash && a.bin != nil:
-				a.trashPanel(c)
-			default:
+	inT := a.sceneOn() == sceneTrash
+	askOn := 0.0
+	if a.ask != nil {
+		askOn = 1
+	}
+	a.askK = max(0, min(1, float32(a.springTo(&a.askSp, askOn))))
+	quiet := func(el ui.Element) ui.Element {
+		if a.askK > .002 {
+			el.Opacity(1 - .82*a.askK).Blur(1.5 * a.askK)
+		}
+		return el
+	}
+	inner := max(a.rightW, a.rightTo*b2f(a.rightEnter))
+	avail := max(0, H-3)
+	var tD, tT float32 // the trash panel has no height outside the trash view: the bin is in the chart
+	switch {
+	case inT:
+		tD, tT = detailMin, max(0, avail-listMin-detailMin)
+	case a.pf == pfDetail:
+		tD = max(240, avail*.62)
+	default:
+		tD = detailSum
+	}
+	hD := max(0, float32(a.springTo(&a.hDsp, float64(tD))))
+	hT := max(0, float32(a.springTo(&a.hTsp, float64(tT))))
+	hL := max(0, avail-hD-hT)
+	a.rightHL = hL
+	// the squeezed list and detail fade out at their lower edge instead of cutting a line in half
+	fade := func(h, natural float32) { // call inside the panel
+		if h >= natural {
+			return
+		}
+		ui.Box(c).Absolute().Left(0).Right(0).Bottom(0).Height(min(22, h*.4)).PassThrough().
+			Draw(func(p *ui.Painter, r ui.Rect) {
+				p.FillGradient(r, ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{
+					{Color: pal.bg.Alpha(0), At: 0}, {Color: pal.bg, At: 1}}}, 0)
+			})
+	}
+	ui.Column(c.Key("right")).Width(a.rightW).Shrink(0).Clip().Children(func() {
+		rin := ui.Column(c.Key("rin")).Width(inner).Grow(1).Shrink(0).AlignItems(ui.End)
+		rin.Children(func() {
+			lp := quiet(ui.Column(c.Key("plist")).Width(a.wL).Height(hL+1).Padding(1, 0, 0, 1).Shrink(0).Clip()).Children(func() {
 				a.browsePanel(c)
+				fade(hL, 200)
+			})
+			if lp.PressedInside() {
+				a.focusPanel(pfList)
 			}
+			dp := quiet(ui.Column(c.Key("pdetail")).Width(a.wD).Height(hD+1).Padding(1, 0, 0, 1).Shrink(0).Clip()).Children(func() {
+				switch {
+				case a.detFull:
+					a.detail(c)
+				case hD < detailSum-8:
+					a.detailLine(c)
+				default:
+					a.detailSummary(c)
+				}
+				if a.detFull {
+					fade(hD, 240)
+				}
+			})
+			if dp.PressedInside() {
+				a.focusPanel(pfDetail)
+			}
+			ui.Column(c.Key("ptrash")).Width(a.wT).Height(hT).Padding(1, 0, 0, 1).Shrink(0).Clip().Children(func() {
+				if hT > 1 && a.bin != nil {
+					quiet(ui.Column(c.Key("tbody")).Grow(1).Shrink(1).MinHeight(0).Clip()).Children(func() { a.trashPanel(c) })
+				}
+			})
 		})
-		ui.Box(c).Height(1).Background(pal.line)
-		a.dock(c)
 	})
 }
 
-func (a *app) diskBar(c *ui.Context) {
+func b2f(b bool) float32 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// rightX and detailY locate the column and its detail panel (for tests).
+func (a *app) rightX() float32  { return a.winW - a.wL }
+func (a *app) detailY() float32 { return 2 + a.rightHL }
+
+// focusPanel brings the list or the detail forward (leaving the trash view if it was open).
+func (a *app) focusPanel(p int) {
+	if a.scene == sceneTrash {
+		a.goScene(sceneBrowse)
+	}
+	a.pf = p
+}
+
+// sceneOn is the scene the right column shows: the trash only while there is a bin.
+func (a *app) sceneOn() int {
+	if a.scene == sceneTrash && a.bin != nil {
+		return sceneTrash
+	}
+	return sceneBrowse
+}
+
+func (a *app) diskBar(c *ui.Context) ui.Element {
 	pal := a.pal
 	if a.disk.ver != a.ver+1 || !a.disk.ok {
 		a.disk.total, a.disk.free, a.disk.ok = diskUsage(a.root)
@@ -543,32 +826,48 @@ func (a *app) diskBar(c *ui.Context) {
 	if a.t != nil {
 		vol = a.name(0)
 	}
-	bar := c.TitleBar()
-	ui.Column(c.Key("disk")).Padding(16, 18+bar.Right, 14, 18).Gap(9).DragWindow().Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Height(26).Children(func() {
-			ui.Text(c, vol).FontWeight(600).SingleLine().Ellipsis("…").Grow(1).Shrink(1)
+	_, dw := a.diskSpot(c)
+	free := ""
+	if d.ok {
+		free = fmtSize(d.free) + " 可用"
+		if a.sz != szCompact {
+			free += " / " + fmtSize(d.total)
+		}
+	}
+	return ui.Column(c.Key("disk")).Width(dw).Gap(5).DragWindow().Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Height(22).Gap(8).Children(func() {
+			ui.Text(c, vol).FontSize(12.5).FontWeight(600).SingleLine().Ellipsis("…").Shrink(0).MaxWidth(dw * .45)
+			ui.Text(c, free).FontSize(12).TextColor(pal.t3).SingleLine().Shrink(1).Ellipsis("…")
+			ui.Spacer(c)
 			if a.btn(c.Key("rescan"), "", btnGhost, true, func() { a.rescanIcon(c) }).Tooltip("重新扫描").
 				Disabled(a.scanning || a.anal != nil).Clicked() {
 				a.startScan(a.root)
 			}
 		})
-		ui.Box(c.Key("bar")).Height(4).Radius(2).Background(pal.panel2).Clip().Draw(func(p *ui.Painter, r ui.Rect) {
+		ui.Box(c.Key("bar")).Height(3).Radius(1.5).Background(pal.panel2).Clip().Draw(func(p *ui.Painter, r ui.Rect) {
 			uw := r.W * float32(uk)
 			p.Fill(ui.Rect{X: r.X, Y: r.Y, W: uw, H: r.H}, pal.t2, 0)
 			if tk > 0 {
 				p.Fill(ui.Rect{X: r.X + uw, Y: r.Y, W: max(2, r.W*float32(tk)), H: r.H}, pal.level[safety.Review], 0)
 			}
 		})
-		ui.Row(c).Gap(4).FontSize(12).Children(func() {
-			if !d.ok {
-				ui.Text(c, "无法读取磁盘容量").TextColor(pal.t3)
-				return
-			}
-			ui.Text(c, fmtSize(d.free)).FontWeight(600).TextColor(pal.t2)
-			ui.Text(c, "可用，共 "+fmtSize(d.total)).TextColor(pal.t3)
-		})
 	})
 }
+
+// diskW is the disk line's width at the top centre, per size class.
+var diskW = [3]float32{240, 300, 360}
+
+// diskSpot places the disk line: centred over the chart's side, between the crumbs and the
+// buttons on the right of the top strip.
+func (a *app) diskSpot(c *ui.Context) (x, w float32) {
+	W, _ := c.Size()
+	lw := W - a.rightW
+	w = max(160, min(diskW[a.sz], lw-2*124))
+	return (lw - w) / 2, w
+}
+
+// topY is where the top strip's controls sit, clear of the window buttons.
+func topY(c *ui.Context) float32 { return max(float32(14), c.TitleBar().Bottom-22) }
 
 func (a *app) rescanIcon(c *ui.Context) {
 	col := a.pal.t2
@@ -587,3 +886,10 @@ func (a *app) rescanIcon(c *ui.Context) {
 
 // ------------------------------------------------------------------------------------------
 
+// settingsKey is the settings shortcut as the platform writes it.
+func settingsKey() string {
+	if runtime.GOOS == "darwin" {
+		return "⌘,"
+	}
+	return "Ctrl+,"
+}

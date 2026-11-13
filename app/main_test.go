@@ -140,13 +140,46 @@ func TestViewFlow(t *testing.T) {
 		t.Errorf("focus after centre click = %d", a.focus)
 	}
 
-	// safety mode
-	if err := tt.Click("安全性"); err != nil {
-		t.Fatal(err)
-	}
+	// an empty trash opens too, and says how things get there
+	tt.ClickAt(a.binS.right-10, a.binS.bottom-10)
 	tt.Advance(time.Second)
 	tt.Frame()
-	shot(t, tt, "4-safety")
+	if a.scene != sceneTrash || !tt.HasText("随时还原") {
+		t.Errorf("empty trash: scene %d %v", a.scene, tt.Texts())
+	}
+	shot(t, tt, "3b-emptytrash")
+	tt.Key(0, ui.KeyEscape)
+	tt.Advance(time.Second)
+	tt.Frame()
+	if a.scene != sceneBrowse {
+		t.Errorf("Esc left scene %d", a.scene)
+	}
+
+	// the right column: pushed in once the scan is done; panels focus on a press
+	if a.rightW < 200 {
+		t.Errorf("right column not in: %v", a.rightW)
+	}
+	narrow := a.rightW
+	tt.ClickAt(a.rightX()+40, 120)
+	tt.Advance(time.Second)
+	tt.Frame()
+	if a.pf != pfList || a.rightW <= narrow {
+		t.Errorf("list focus: pf=%d w=%v (was %v)", a.pf, a.rightW, narrow)
+	}
+	shot(t, tt, "4-listfocus")
+	tt.ClickAt(a.winW-a.wD+30, a.detailY()+20)
+	tt.Advance(time.Second)
+	tt.Frame()
+	if a.pf != pfDetail {
+		t.Errorf("detail focus: pf=%d", a.pf)
+	}
+	shot(t, tt, "4b-detailfocus")
+	tt.ClickAt(30, 400) // the chart's blank side gives the room back
+	tt.Advance(time.Second)
+	tt.Frame()
+	if a.pf != pfNone || a.rightW > narrow+1 {
+		t.Errorf("unfocus: pf=%d w=%v", a.pf, a.rightW)
+	}
 
 	// 自动清理: analysis sweep → throw → tree shrinks → undo from the toast
 	before := a.t.Nodes[0].Size
@@ -159,7 +192,7 @@ func TestViewFlow(t *testing.T) {
 	tt.Advance(900 * time.Millisecond)
 	tt.Frame()
 	shot(t, tt, "5-analysis")
-	if !tt.HasText("停止分析") {
+	if !tt.HasText(a.anal.phase() + "…") {
 		t.Errorf("busy button: %v", tt.Texts())
 	}
 	settle := func() {
@@ -200,28 +233,6 @@ func TestViewFlow(t *testing.T) {
 		t.Errorf("trash not empty after undo: %d", len(a.bin.List()))
 	}
 
-	// 查看评估: the sheet, then 释放 what is checked
-	if err := tt.Click("查看评估"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Advance(time.Second)
-	tt.Frame()
-	if a.scene != sceneEval || a.eval == nil {
-		t.Fatalf("scene %d after 查看评估", a.scene)
-	}
-	shot(t, tt, "6-eval")
-	chosen, size := a.eval.chosen()
-	if len(chosen) == 0 {
-		t.Fatal("nothing chosen")
-	}
-	if err := tt.Click("释放 " + fmtSize(size)); err != nil {
-		t.Fatal(err, tt.Texts())
-	}
-	settle()
-	if got := a.t.Nodes[0].Size; got != before-size {
-		t.Errorf("after eval clean root size %d, want %d", got, before-size)
-	}
-
 	// manual delete of a personal file asks first
 	var doc int32 = -1
 	for i := range a.t.Nodes {
@@ -245,13 +256,11 @@ func TestViewFlow(t *testing.T) {
 		t.Error("document still attached")
 	}
 
-	// trash panel
-	if err := tt.Click("查看"); err != nil {
-		t.Fatal(err)
-	}
+	// trash panel: a press on the bin's panel opens it
+	tt.ClickAt(a.binS.right-10, a.binS.bottom-10)
 	tt.Advance(time.Second)
 	tt.Frame()
-	if !tt.HasText("按清理规则") || !tt.HasText("你手动删除") {
+	if !tt.HasText("你手动删除") || !tt.HasText("个人数据 · 谨慎") {
 		t.Errorf("trash panel: %v", tt.Texts())
 	}
 	shot(t, tt, "9-trash")
@@ -309,9 +318,11 @@ func TestViewFlow(t *testing.T) {
 		t.Errorf("scene %d after empty", a.scene)
 	}
 
-	// settings
-	if err := tt.Click("设置"); err != nil {
-		t.Fatal(err)
+	// settings, by its shortcut
+	tt.Key(ui.Cmd, ui.KeyComma)
+	tt.Frame()
+	if !a.showSettings {
+		t.Error("⌘, did not open the settings")
 	}
 	tt.Advance(time.Second)
 	tt.Frame()
@@ -324,10 +335,6 @@ func TestViewFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Click("完成")
-	tt.Advance(time.Second)
-	if err := tt.Click("目录"); err != nil {
-		t.Fatal(err)
-	}
 	tt.Advance(time.Second)
 	tt.Frame()
 	shot(t, tt, "11-classic")
@@ -352,11 +359,12 @@ func TestInUse(t *testing.T) {
 	}
 }
 
-// TestStyles renders every style in both modes, with a hover callout and the evaluation sheet.
+// TestStyles renders every style in both modes, with a hover callout.
 func TestStyles(t *testing.T) {
 	a := loaded(t)
 	a.set.InUseMin = 0
 	tt := ui.NewTester(a.view, 1280, 820)
+	a.keepMode = true
 	for i, p := range palettes {
 		a.palIdx = i
 		a.mode = modeStructure
@@ -382,11 +390,36 @@ func TestStyles(t *testing.T) {
 		tt.Frame()
 		shot(t, tt, "s-"+p.name+"-2")
 	}
-	a.palIdx = 1
-	a.evaluate()
-	tt.Advance(time.Second)
-	tt.Frame()
-	shot(t, tt, "s-mech-eval")
+}
+
+// TestSizes renders the compact, regular and wide layouts at rest, with the list in focus, and
+// in the trash.
+func TestSizes(t *testing.T) {
+	for _, sz := range []struct {
+		name string
+		w, h int
+	}{{"compact", 980, 640}, {"regular", 1280, 820}, {"wide", 1720, 1040}} {
+		a := loaded(t)
+		tt := ui.NewTester(a.view, sz.w, sz.h)
+		tt.Advance(2 * time.Second)
+		tt.Frame()
+		shot(t, tt, "z-"+sz.name+"-1rest")
+		a.focusPanel(pfList)
+		tt.Frame()
+		tt.Advance(time.Second)
+		tt.Frame()
+		shot(t, tt, "z-"+sz.name+"-2list")
+		a.focusPanel(pfDetail)
+		tt.Frame()
+		tt.Advance(time.Second)
+		tt.Frame()
+		shot(t, tt, "z-"+sz.name+"-3detail")
+		a.goScene(sceneTrash)
+		tt.Frame()
+		tt.Advance(time.Second)
+		tt.Frame()
+		shot(t, tt, "z-"+sz.name+"-4trash")
+	}
 }
 
 func (a *app) arcPointOf(h *arc) (float32, float32) {

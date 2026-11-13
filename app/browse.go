@@ -24,7 +24,7 @@ import (
 func (a *app) browsePanel(c *ui.Context) {
 	pal := a.pal
 	ui.Column(c.Key("browse")).Grow(1).Shrink(1).Children(func() {
-		a.stagger(a.listHeader(c), 0)
+		a.listHeader(c)
 		a.throwNode = scan.None
 		if a.t == nil {
 			ui.Box(c).Grow(1)
@@ -37,28 +37,33 @@ func (a *app) browsePanel(c *ui.Context) {
 				}
 			})
 		}
-		ui.Box(c).Height(1).Background(pal.line)
-		a.stagger(a.detail(c), 1)
 	})
 }
 
 func (a *app) listHeader(c *ui.Context) ui.Element {
 	pal := a.pal
-	return ui.Row(c.Key("lh")).Padding(14, 18, 8, 18).Gap(8).AlignItems(ui.Center).Children(func() {
+	pl := float32(18)
+	if a.slim {
+		pl = 16
+	}
+	return ui.Row(c.Key("lh")).Padding(14, pl, 8, pl).Gap(8).AlignItems(ui.Center).DragWindow().Children(func() {
 		if a.t != nil && a.focus != 0 {
 			if a.btn(c.Key("lup"), "", btnGhost, true, func() { icon(c, icoUp, 15, pal.t2, 2) }).Tooltip("返回上级（Esc）").Clicked() && a.anal == nil {
 				a.zoomTo(a.t.Nodes[a.focus].Parent)
 			}
 		}
-		ui.Column(c).Grow(1).Shrink(1).Gap(1).Children(func() {
+		fs := float32(17)
+		if a.slim {
+			fs = 15
+		}
+		a.rise(ui.Column(c).Grow(1).Shrink(1).Gap(1).Children(func() {
 			if a.t == nil {
-				ui.Text(c, "—").FontSize(17).FontWeight(600)
+				ui.Text(c, "—").FontSize(fs).FontWeight(600)
 				return
 			}
-			ui.Text(c, a.name(a.focus)).FontSize(17).FontWeight(600).SingleLine().Ellipsis("…")
-			ui.Text(c, fmtSize(a.t.Nodes[a.focus].Size)+" · "+fmtNum(int64(len(a.children())))+" 项").FontSize(12).TextColor(pal.t3)
-		})
-		ui.Segmented(c.Key("sort"), &a.sortBy, "大小", "名称", "时间")
+			ui.Text(c, a.name(a.focus)).FontSize(fs).FontWeight(600).SingleLine().Ellipsis("…")
+			ui.Text(c, fmtSize(a.t.Nodes[a.focus].Size)+" · "+fmtNum(int64(len(a.children())))+" 项").FontSize(12).TextColor(pal.t3).SingleLine()
+		}), a.slimT0, 0)
 	})
 }
 
@@ -85,7 +90,14 @@ func (a *app) row(c *ui.Context, n int32, i int) {
 	lv := a.verdict(n).Level()
 	sel := n == a.selected
 	dir := nd.IsDir()
+	slim, wide := a.slim, a.sz == szWide && !a.slim
 	r := ui.Row(c).Height(32).Margin(0, 8).Padding(0, 4, 0, 10).Gap(9).Radius(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+	if slim {
+		r.Height(30).Margin(0, 6).Padding(0, 6, 0, 10).Gap(8)
+	}
+	if i < 14 {
+		a.rise(r, a.slimT0, i+1)
+	}
 	hot := r.Hovered() || n == a.hover
 	switch {
 	case sel:
@@ -107,13 +119,24 @@ func (a *app) row(c *ui.Context, n int32, i int) {
 			col = pal.t3
 		}
 		ui.Text(c, a.t.Name(n)).TextColor(col).SingleLine().Ellipsis("…").Grow(1).Shrink(1)
-		switch lv {
-		case safety.Safe:
+		switch {
+		case slim:
+		case lv == safety.Safe:
 			ui.Text(c, "可清理").FontSize(11.5).TextColor(pal.level[safety.Safe]).SingleLine().Shrink(0)
-		case safety.Protected:
+		case lv == safety.Protected:
 			lockIcon(c, 13, pal.t4)
 		}
-		ui.Text(c, fmtSize(nd.Size)).FontSize(12).Font(pal.mono).Width(64).TextAlign(ui.End).TextColor(pal.t2).SingleLine().Shrink(0)
+		if wide {
+			ui.Text(c, ageStr(a.ev.AgeDays(n))).FontSize(11.5).Width(64).TextAlign(ui.End).TextColor(pal.t4).SingleLine().Shrink(0)
+		}
+		sw := float32(64)
+		if slim {
+			sw = 60
+		}
+		ui.Text(c, fmtSize(nd.Size)).FontSize(12).Font(pal.mono).Width(sw).TextAlign(ui.End).TextColor(pal.t2).SingleLine().Shrink(0)
+		if slim && !hot && !sel {
+			return // the delete button only under the pointer: the slim column keeps the names
+		}
 		del := ui.Box(c.Key("del")).Size(26, 26).Radius(6).Shrink(0).Cursor(ui.CursorPointer)
 		ic := pal.t4
 		if hot || sel {
@@ -208,9 +231,53 @@ func (a *app) habitOf(n int32) *habit.Match {
 	return a.habit.Match(habit.Subject{Path: a.t.Path(n), Dir: nd.IsDir(), Size: nd.Size, AgeDays: a.ev.AgeDays(n)})
 }
 
+// detailSummary is the detail panel at rest: the selection's name, size and verdict in two
+// lines. A press on it brings the full detail.
+func (a *app) detailSummary(c *ui.Context) {
+	pal := a.pal
+	if a.t == nil {
+		return
+	}
+	n := a.selected
+	if n == scan.None || !a.t.Attached(n) {
+		n = a.focus
+	}
+	nd := &a.t.Nodes[n]
+	lv := a.verdict(n).Level()
+	ui.Column(c.Key("dsum")).Padding(13, 14, 12, 18).Gap(5).Cursor(ui.CursorPointer).Children(func() {
+		a.rise(ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, a.name(n)).FontSize(13).FontWeight(600).SingleLine().Ellipsis("…").Grow(1).Shrink(1)
+			icon(c, icoChevron, 12, pal.t4, 1.8)
+		}), a.detT0, 0)
+		a.rise(ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, fmtSize(nd.Size)).FontSize(18).FontWeight(600).SingleLine().Shrink(0)
+			if n != 0 {
+				ui.Box(c).Size(6, 6).Radius(3).Background(pal.level[lv]).Shrink(0)
+				ui.Text(c, levelNames[lv]).FontSize(11.5).TextColor(pal.level[lv]).SingleLine().Shrink(1).Ellipsis("…")
+			}
+		}), a.detT0, 1)
+	})
+}
+
+// detailLine is the detail squeezed to one line (the trash has the room): name and size.
+func (a *app) detailLine(c *ui.Context) {
+	pal := a.pal
+	if a.t == nil {
+		return
+	}
+	n := a.selected
+	if n == scan.None || !a.t.Attached(n) {
+		n = a.focus
+	}
+	a.rise(ui.Row(c.Key("dline")).Height(detailMin).Padding(0, 14, 0, 18).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer).Children(func() {
+		ui.Text(c, a.name(n)).FontSize(13).FontWeight(600).SingleLine().Ellipsis("…").Grow(1).Shrink(1)
+		ui.Text(c, fmtSize(a.t.Nodes[n].Size)).FontSize(12).Font(pal.mono).TextColor(pal.t3).SingleLine().Shrink(0)
+	}), a.detT0, 0)
+}
+
 func (a *app) detail(c *ui.Context) ui.Element {
 	pal := a.pal
-	return ui.Scroll(c.Key("detail")).MaxHeight(380).Shrink(0).Children(func() {
+	return ui.Scroll(c.Key("detail")).Grow(1).Shrink(1).MinHeight(0).Children(func() {
 		if a.t == nil {
 			return
 		}
@@ -223,12 +290,12 @@ func (a *app) detail(c *ui.Context) ui.Element {
 		lv := v.Level()
 		dir := nd.IsDir()
 		ui.Column(c).Padding(18, 18, 16, 18).Gap(10).Children(func() {
-			ui.Column(c).Gap(3).Children(func() {
+			a.rise(ui.Column(c).Gap(3).Children(func() {
 				ui.Text(c, a.name(n)).FontSize(14).FontWeight(600).SingleLine().Ellipsis("…")
 				ui.Text(c, a.displayPath(n)).FontSize(11).Font(pal.mono).TextColor(pal.t4).SingleLine().TruncateMiddle()
-			})
-			ui.Row(c).Gap(10).AlignItems(ui.End).Children(func() {
-				ui.Text(c, fmtSize(nd.Size)).FontSize(26).FontWeight(600).SingleLine()
+			}), a.detT0, 0)
+			a.rise(ui.Row(c).Gap(10).AlignItems(ui.End).Children(func() {
+				ui.Text(c, fmtSize(nd.Size)).FontSize(26).FontWeight(600).SingleLine().Shrink(0)
 				meta := []string{}
 				if dir {
 					meta = append(meta, fmtNum(int64(nd.Count-1))+" 项")
@@ -240,9 +307,9 @@ func (a *app) detail(c *ui.Context) ui.Element {
 					meta = append(meta, "占磁盘 "+diskPct(nd.Size, a.disk.total))
 				}
 				ui.Text(c, strings.Join(meta, " · ")).FontSize(12).TextColor(pal.t3).SingleLine().Shrink(1).Ellipsis("…").Padding(0, 0, 5, 0)
-			})
+			}), a.detT0, 1)
 			// verdict
-			ui.Row(c).Gap(9).AlignItems(ui.Start).Children(func() {
+			a.rise(ui.Row(c).Gap(9).AlignItems(ui.Start).Children(func() {
 				dc := pal.level[lv]
 				if n == 0 {
 					dc = pal.t3
@@ -256,7 +323,7 @@ func (a *app) detail(c *ui.Context) ui.Element {
 					ui.Text(c, title+" ").FontWeight(600).TextColor(col)
 					ui.Text(c, reason).TextColor(pal.t2)
 				})
-			})
+			}), a.detT0, 2)
 			if m := a.habitOf(n); m != nil {
 				ui.RichText(c).FontSize(12).Children(func() {
 					ui.Text(c, "依据你的习惯").FontWeight(600).TextColor(pal.level[safety.Review])

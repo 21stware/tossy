@@ -426,25 +426,28 @@ func (a *app) trashChartInput(chart ui.Element) {
 	}
 }
 
-// trashLegend: where the bin's contents came from, in the chart's bottom-left corner.
-func (a *app) trashLegend(c *ui.Context) {
-	pal := a.pal
-	ts := a.syncTrashSun()
+// trashSummary is the trash scene's subtitle: how much, and the folder it all came from.
+func (a *app) trashSummary() string {
 	items := a.bin.List()
+	if len(items) == 0 {
+		return "空"
+	}
 	var total int64
 	for _, it := range items {
 		total += it.Size
 	}
-	ui.Column(c.Key("tlegend")).Absolute().Left(18).Bottom(10).Gap(5).MaxWidth(320).PassThrough().Children(func() {
-		ui.Text(c, trashName()+"里的内容来自哪里").FontSize(12).FontWeight(600).TextColor(pal.t2)
-		sub := "空"
-		if len(items) > 0 {
-			sub = fmtNum(int64(len(items))) + " 项 · " + fmtSize(total)
-			if ts.pre != "" {
-				sub += " · 都在 " + displayHome(filepath.FromSlash(ts.pre)) + " 下"
-			}
-		}
-		ui.Text(c, sub).FontSize(11).TextColor(pal.t4).SingleLine().TruncateMiddle()
+	s := fmtNum(int64(len(items))) + " 项 · " + fmtSize(total)
+	if pre := a.tsun.pre; pre != "" {
+		s += " · 都在 " + displayHome(filepath.FromSlash(pre)) + " 下"
+	}
+	return s
+}
+
+// trashLegend: where the bin's contents came from, in the chart's bottom-left corner.
+func (a *app) trashLegend(c *ui.Context) {
+	pal := a.pal
+	ts := a.syncTrashSun()
+	ui.Column(c.Key("tlegend")).Absolute().Left(20).Bottom(12).Gap(5).MaxWidth(320).Opacity(a.tvK).PassThrough().Children(func() {
 		if ts.root == nil {
 			return
 		}
@@ -463,6 +466,49 @@ func (a *app) trashLegend(c *ui.Context) {
 				ui.Box(c).Size(8, 8).Radius(2).Background(col)
 				ui.Text(c, parts[len(parts)-1]).FontSize(11.5).TextColor(pal.t2).SingleLine().Ellipsis("…").Shrink(1)
 				ui.Text(c, fmtSize(k.size)).FontSize(11).Font(pal.mono).TextColor(pal.t4)
+			})
+		}
+	})
+	a.trashSafety(c)
+}
+
+// trashSafety is the trash's contents by safety verdict: what each level holds, as a stacked
+// bar and four lines, at the chart's top right (the bin has the bottom right). The arcs carry the same colours.
+func (a *app) trashSafety(c *ui.Context) {
+	pal := a.pal
+	var sums [4]int64
+	var cnt [4]int
+	var total int64
+	for _, it := range a.bin.List() {
+		lv := lvOf(&it)
+		sums[lv] += it.Size
+		cnt[lv]++
+		total += it.Size
+	}
+	if total == 0 {
+		return
+	}
+	ui.Column(c.Key("tsafe")).Absolute().Right(20).Top(14).Width(220).Gap(6).Opacity(a.tvK).PassThrough().Children(func() {
+		ui.Text(c, "安全性").FontSize(11).FontWeight(600).TextColor(pal.t3)
+		ui.Box(c.Key("tsbar")).Height(5).Radius(2.5).Clip().Draw(func(p *ui.Painter, r ui.Rect) {
+			x := r.X
+			for lv := range sums {
+				if sums[lv] > 0 {
+					w := r.W * float32(sums[lv]) / float32(total) * a.tvK
+					p.Fill(ui.Rect{X: x, Y: r.Y, W: max(0, w-1.5), H: r.H}, pal.level[lv], 0)
+					x += w
+				}
+			}
+		})
+		for lv, name := range levelTitles {
+			if cnt[lv] == 0 {
+				continue
+			}
+			ui.Row(c.Key(lv)).Gap(7).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Size(8, 8).Radius(4).Background(pal.level[lv])
+				ui.Text(c, name).FontSize(11.5).TextColor(pal.t2).SingleLine().Grow(1).Shrink(1).Ellipsis("…")
+				ui.Text(c, fmtNum(int64(cnt[lv]))+" 项").FontSize(11).TextColor(pal.t4).SingleLine()
+				ui.Text(c, fmtSize(sums[lv])).FontSize(11).Font(pal.mono).TextColor(pal.t3).SingleLine()
 			})
 		}
 	})

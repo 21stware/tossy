@@ -71,22 +71,68 @@ func (a *app) progress(t0 time.Time, delay, dur time.Duration) float64 {
 	return max(0, min(1, k))
 }
 
-// stagger fades panel part i in from 10px below, one after another (the prototype's staggerIn).
-func (a *app) stagger(el ui.Element, i int) ui.Element {
-	if !a.sceneT0.IsZero() { // leaving: fade up and out, quicker
-		k := a.progress(a.sceneT0, time.Duration(min(i, 6))*12*time.Millisecond, 100*time.Millisecond)
-		e := float32(easeStd(k))
-		return el.Opacity(1-e).Translate(0, -6*e)
-	}
-	k := a.progress(a.panelT0, 40*time.Millisecond+time.Duration(i)*26*time.Millisecond, 300*time.Millisecond)
+// stagger lets panel part i rise in after a scene change (see rise).
+func (a *app) stagger(el ui.Element, i int) ui.Element { return a.rise(el, a.panelT0, i) }
+
+// rise lets part i of a group that (re)appeared at t0 come in: each part 24ms after the one
+// before, up 10px with a slight overshoot, its opacity ahead of its position so it reads at
+// once. A group that changes again mid-way simply restarts from where the eye is.
+func (a *app) rise(el ui.Element, t0 time.Time, i int) ui.Element {
+	k := a.progress(t0, time.Duration(min(i, 10))*24*time.Millisecond, 340*time.Millisecond)
 	if k >= 1 {
 		return el
 	}
-	e := float32(easeStd(k))
-	return el.Opacity(e).Translate(0, 10*(1-e))
+	y := float32(easeRise(k))
+	o := float32(easeOut(min(1, k*1.7)))
+	return el.Opacity(o).Translate(0, 10*(1-y))
 }
+
+// easeRise settles with a small overshoot, like a light spring.
+func easeRise(t float64) float64 { return bez(.2, 1.25, .35, 1, t) }
 
 func homeDir() string {
 	h, _ := os.UserHomeDir()
 	return h
 }
+
+// spring is a value that follows its target like a damped spring: it can be retargeted mid-way
+// without a restart or a jolt, keeps its velocity, and answers within the first frame.
+type spring struct {
+	x, v, to float64
+	t        time.Time
+	set      bool
+}
+
+const (
+	springK    = 520 // stiffness: settles in about 250ms
+	springZeta = .8  // a hint of overshoot, so it feels alive rather than braked
+)
+
+func (a *app) springTo(s *spring, to float64) float64 {
+	if !s.set || !a.motion() {
+		s.x, s.v, s.to, s.t, s.set = to, 0, to, a.now, true
+		return to
+	}
+	s.to = to
+	dt := a.now.Sub(s.t).Seconds()
+	s.t = a.now
+	dt = max(0, min(dt, 1.0/30))
+	w := math.Sqrt(springK)
+	for dt > 0 {
+		h := min(dt, 1.0/240)
+		acc := -springK*(s.x-s.to) - 2*springZeta*w*s.v
+		s.v += acc * h
+		s.x += s.v * h
+		dt -= h
+	}
+	span := max(1, math.Abs(s.to))
+	if math.Abs(s.x-s.to) < 1e-3*span && math.Abs(s.v) < 1e-2*span {
+		s.x, s.v = s.to, 0
+	} else {
+		a.frame = true
+	}
+	return s.x
+}
+
+// snap puts a spring at its target at once.
+func (s *spring) snap(to float64) { s.x, s.v, s.to, s.set = to, 0, to, true }

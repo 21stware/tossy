@@ -49,14 +49,18 @@ func (a *app) trashPanel(c *ui.Context) {
 	}
 	n := len(items)
 	ui.Column(c.Key("trashp")).Grow(1).Shrink(1).Children(func() {
-		a.stagger(ui.Row(c.Key("tsh")).Padding(22, 14, 0, 24).AlignItems(ui.Start).Children(func() {
+		a.stagger(ui.Row(c.Key("tsh")).Padding(16, 14, 0, 24).AlignItems(ui.Start).Children(func() {
 			ui.Column(c).Grow(1).Shrink(1).Gap(2).Children(func() {
 				ui.Text(c, trashName()+" · "+binTiers[a.binS.tier].name).FontSize(12).TextColor(pal.t3)
 				big := "空"
 				if n > 0 {
 					big = fmtSize(total)
 				}
-				ui.Text(c, big).FontSize(34).FontWeight(600).LetterSpacing(-.8)
+				bf := float32(34)
+				if a.sz == szCompact {
+					bf = 26
+				}
+				ui.Text(c, big).FontSize(bf).FontWeight(600).LetterSpacing(-.8)
 				sub := "删除的内容会先放在这里，清空前都可以还原"
 				if n > 0 {
 					sub = fmt.Sprintf("%s 项 · 清空前可随时还原", fmtNum(int64(n)))
@@ -84,6 +88,9 @@ func (a *app) trashPanel(c *ui.Context) {
 		}
 		a.stagger(ui.Scroll(c.Key("tsl")).Grow(1).Shrink(1).Children(func() {
 			ui.Column(c).Padding(6, 12, 10, 12).Children(func() {
+				if n == 0 {
+					a.trashEmpty(c)
+				}
 				for _, src := range srcOrder {
 					a.trashGroup(c, src, by[src], sums[src])
 				}
@@ -110,6 +117,26 @@ func (a *app) trashPanel(c *ui.Context) {
 				a.ask = &askState{kind: askEmpty, t0: a.now}
 			}
 		}), 3)
+	})
+}
+
+// trashEmpty is what an empty trash says: where things come from, and how to get them there.
+func (a *app) trashEmpty(c *ui.Context) {
+	pal := a.pal
+	ui.Column(c.Key("tempty")).Padding(18, 12).Gap(12).Children(func() {
+		for i, l := range [][2]string{
+			{"自动清理", "左侧的按钮会把可安全清理的内容移到这里"},
+			{"手动删除", "列表行尾的垃圾桶，或把扇区拖到这里"},
+			{"随时还原", "清空之前，这里的每一项都能放回原处"},
+		} {
+			a.rise(ui.Row(c.Key(i)).Gap(10).AlignItems(ui.Start).Children(func() {
+				ui.Box(c).Size(6, 6).Radius(3).Background(pal.t4).Margin(6, 0, 0, 0).Shrink(0)
+				ui.Column(c).Gap(2).Shrink(1).Children(func() {
+					ui.Text(c, l[0]).FontSize(12.5).FontWeight(600).TextColor(pal.t2)
+					ui.Text(c, l[1]).FontSize(12).TextColor(pal.t3)
+				})
+			}), a.panelT0, 3+i)
+		}
 	})
 }
 

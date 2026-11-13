@@ -83,17 +83,17 @@ type binState struct {
 	tierT0         time.Time
 	right, bottom  float32 // the bin box's bottom-right corner in the window (last frame)
 
-	pend     []pileEnt       // moved out of the tree, not in the journal yet
-	inflight map[string]int  // keys of balls in the air
+	pend     []pileEnt      // moved out of the tree, not in the journal yet
+	inflight map[string]int // keys of balls in the air
 	landed   map[string]time.Time
 	lastLand time.Time
 	bumpT0   time.Time
 
-	lid       float32 // current angle magnitude, degrees
-	lidFrom   float32
-	lidTo     float32
-	lidT0     time.Time
-	hot       bool // a drag hovers the bin
+	lid     float32 // current angle magnitude, degrees
+	lidFrom float32
+	lidTo   float32
+	lidT0   time.Time
+	hot     bool // a drag hovers the bin
 
 	dumpT0 time.Time
 	dump   []dumpBall
@@ -107,13 +107,16 @@ type binState struct {
 	shoveT0 time.Time
 
 	// the hero bin of the trash scene: the dock bin grows to the column's bottom centre
-	heroTw         tween
+	heroSp         spring
 	heroK, heroS   float32
+	heroW          float32 // the hero's floor, wide enough for its tips
 	heroTX, heroTY float32 // target bottom centre in the window
 	textH          float32 // the dock's text column, last frame
 	hov            string  // pile key under the pointer in the hero bin
 	hovNew         bool    // hov changed this frame: its row scrolls into view
 	rowHL          string  // pile key of the trash row under the pointer
+	hlKey          string  // the lit ball, and when it lit: it swells over 150ms
+	hlT0           time.Time
 }
 
 // hero is the zoom from the dock slot: the slot's bottom centre, the scale and the shift.
@@ -418,7 +421,7 @@ func (a *app) paintBallTip(p *ui.Painter) {
 	w1, _ := p.MeasureText(0, ui.Span{Text: name, Size: 12, Weight: 600})
 	w2, _ := p.MeasureText(0, ui.Span{Text: info, Size: 10.5, Font: "monospace"})
 	w, h := max(w1, w2)+20, float32(42)
-	bx := max(f.heroTX-a.rightW/2+8, min(x-w/2, f.heroTX+a.rightW/2-8-w))
+	bx := max(f.heroTX-f.heroW/2+8, min(x-w/2, f.heroTX+f.heroW/2-8-w))
 	by := y - b.r*s*1.35 - 10 - h
 	p.Fill(ui.Rect{X: bx, Y: by, W: w, H: h}, pal.ink.Alpha(.12), 8)
 	p.Fill(ui.Rect{X: bx + .5, Y: by + .5, W: w - 1, H: h - 1}, pal.panel, 7.5)
@@ -433,6 +436,21 @@ func (a *app) paintBinBack(p *ui.Painter, ents []pileEnt) {
 	f := &a.binS
 	T := &binTiers[f.tier]
 	ik := a.binInk()
+	if k := f.heroK; k > 0 {
+		// the bin's shadow on the floor
+		_, _, s, _, _ := f.hero()
+		w := T.w * s * .84
+		sh := float32(.8)
+		if !a.pal.dark {
+			sh = .22
+		}
+		p.Transform(ui.Scaling(1, 9/w), f.heroTX, f.heroTY+.5, func() {
+			p.FillRadialGradient(ui.Rect{X: f.heroTX - w/2, Y: f.heroTY + .5 - w/2, W: w, H: w}, ui.RadialGradient{
+				Radius: w / 2,
+				Stops:  []ui.GradientStop{{Color: ui.RGBA(0, 0, 0, sh*k), At: 0}, {Color: ui.RGBA(0, 0, 0, 0), At: 1}},
+			}, 0)
+		})
+	}
 	a.binXform(p, func(ox, oy float32) {
 		p.FillPath(svgPath(T.body, ox, oy), ik.back)
 		switch f.tier {
@@ -474,6 +492,10 @@ func (a *app) paintBinBack(p *ui.Painter, ents []pileEnt) {
 			if hl == "" {
 				hl = f.rowHL
 			}
+			if hl != f.hlKey {
+				f.hlKey, f.hlT0 = hl, a.now
+			}
+			sw := 1 + .35*float32(easeStd(a.progress(f.hlT0, 0, 150*time.Millisecond)))
 			var hb *pileBall
 			for _, e := range ents {
 				if f.inflight[e.key] > 0 {
@@ -513,7 +535,7 @@ func (a *app) paintBinBack(p *ui.Painter, ents []pileEnt) {
 				}
 			}
 			if hb != nil {
-				x, y, r := ox+hb.x, oy+hb.y, hb.r*1.35
+				x, y, r := ox+hb.x, oy+hb.y, hb.r*sw
 				a.paintBall(p, x, y, r, a.pal.level[hb.lv], 1)
 				p.StrokePath((&ui.Path{}).Circle(x, y, r+.6), 1.2, ui.RGBA(255, 255, 255, .92))
 			}

@@ -685,9 +685,6 @@ func (a *app) paintScreen(p *ui.Painter, r ui.Rect) {
 // highlight is the set of nodes the chart should bring forward (the evaluation's selection),
 // or nil.
 func (a *app) highlight() map[int32]bool {
-	if a.scene == sceneEval && a.eval != nil {
-		return a.eval.chosenSet()
-	}
 	return nil
 }
 

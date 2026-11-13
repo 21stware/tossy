@@ -184,27 +184,27 @@ func (a *app) dock(c *ui.Context) {
 	total := len(ents)
 	n, size := a.landed(ents)
 	T := &binTiers[f.tier]
-	// the trash scene zooms the bin into a hero at the column's bottom centre
-	inT := a.scene == sceneTrash && a.bin != nil
-	W, H := c.Size()
-	hk := float32(0)
+	// the trash scene grows the bin into a hero in the chart's bottom-right corner
+	inT := a.sceneOn() == sceneTrash
+	_, H := c.Size()
+	cr := a.chartR
+	hk := 0.0
 	if inT {
 		hk = 1
 	}
-	k := float32(a.tweenTo(&f.heroTw, float64(hk), 550*time.Millisecond))
-	f.heroK = k
-	heroH := max(110, min(H*.27, 210))
-	cw := float32(rightW0)
-	if a.rightTw.set {
-		cw = float32(a.rightTw.to)
+	k := max(0, float32(a.springTo(&f.heroSp, hk)))
+	f.heroK = min(k, 1)
+	heroH := max(96, min(H*.19, 160))
+	if a.sz == szCompact {
+		heroH = max(84, min(H*.16, 116))
 	}
-	f.heroS = max(1, min(min(cw*.44, 260)/T.w, heroH/T.h, 3.2))
-	f.heroTX, f.heroTY = W-a.rightW/2, H-30
-	row := ui.Row(c.Key("dock")).Padding(12, 14, 10, 18).Gap(12).AlignItems(ui.End)
-	if f.textH > 0 {
-		nat := max(f.textH, T.h) + 22
-		row.Height(nat + (T.h*f.heroS+52-nat)*k)
-	}
+	f.heroS = max(1, min(min(cr.W*.17, 190)/T.w, heroH/T.h, 2.6))
+	hw := T.w * f.heroS
+	f.heroW = hw + 56
+	f.heroTX, f.heroTY = cr.X+cr.W-dockR-hw/2, cr.Y+cr.H-dockB-10
+	nat := a.dockNat()
+	row := ui.Row(c.Key("dock")).Absolute().Right(dockR-14).Bottom(dockB-10).Padding(12, 14, 10, 14).Gap(12).AlignItems(ui.End).
+		Height(nat + (T.h*f.heroS+52-nat)*k).MinWidth(T.w + 28 + (hw+28-T.w)*k)
 	// hover a ball of the hero bin: its row lights and scrolls into view, its arc lights
 	prev := f.hov
 	f.hov = ""
@@ -224,9 +224,9 @@ func (a *app) dock(c *ui.Context) {
 	if f.hov != prev {
 		a.frame = true
 	}
-	live := k < .3
 	row.Children(func() {
-		ui.Column(c.Key("dtext")).Grow(1).Shrink(1).Gap(1).Opacity(max(0, 1-k*1.8)).Draw(func(p *ui.Painter, r ui.Rect) {
+		ui.Spacer(c)
+		ui.Column(c.Key("dtext")).Shrink(1).Gap(1).AlignItems(ui.End).Opacity(max(0, 1-k*1.8) * (1 - .82*a.askK)).Draw(func(p *ui.Painter, r ui.Rect) {
 			if k == 0 {
 				f.textH = r.H
 			}
@@ -243,25 +243,15 @@ func (a *app) dock(c *ui.Context) {
 			ui.Text(c, sz).FontSize(20).FontWeight(600).SingleLine()
 			sub := "拖动文件到这里删除"
 			if total > 0 {
-				sub = fmtNum(int64(n)) + " 项 · 清空前可随时还原"
+				sub = fmtNum(int64(n)) + " 项 · 点按查看"
+			}
+			if !inT {
+				sub = "点按查看"
+				if total > 0 {
+					sub = fmtNum(int64(n)) + " 项"
+				}
 			}
 			ui.Text(c, sub).FontSize(12).TextColor(pal.t3).SingleLine().Ellipsis("…")
-			ui.Row(c).Gap(6).Padding(8, 0, 0, 0).Children(func() {
-				label := "查看"
-				if a.scene == sceneTrash {
-					label = "返回"
-				}
-				if a.btn(c.Key("view"), label, btnPlain, true, nil).Disabled(total == 0 && a.scene != sceneTrash).Clicked() && live {
-					if a.scene == sceneTrash {
-						a.goScene(sceneBrowse)
-					} else {
-						a.goScene(sceneTrash)
-					}
-				}
-				if a.btn(c.Key("empty"), "清空", btnPlain, true, nil).Disabled(total == 0 || a.trashMoving > 0).Clicked() && live {
-					a.ask = &askState{kind: askEmpty, t0: a.now}
-				}
-			})
 		})
 		bin := ui.Box(c.Key("bin")).Size(T.w, T.h).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
 			a.now = p.Now()
@@ -269,15 +259,27 @@ func (a *app) dock(c *ui.Context) {
 			a.paintBinBack(p, f.ents)
 		})
 		if !inT {
-			bin.Cursor(ui.CursorPointer)
-			if total > 0 {
-				bin.Tooltip("查看" + trashName())
-			}
-			if bin.Clicked() && total > 0 {
-				a.goScene(sceneTrash)
-			}
+			bin.Tooltip("查看" + trashName())
 		}
 	})
+	if !inT {
+		row.Cursor(ui.CursorPointer)
+		if row.Clicked() && a.bin != nil { // an empty bin opens too
+			a.goScene(sceneTrash)
+		}
+	}
+}
+
+// dockR and dockB keep the bin off the chart's right and bottom edges.
+const dockR, dockB = 22, 14
+
+// dockNat is the trash row's resting height: its text or the bin, whichever is taller.
+func (a *app) dockNat() float32 {
+	th := a.binS.textH
+	if th == 0 {
+		th = 62
+	}
+	return max(th, binTiers[a.binS.tier].h) + 22
 }
 
 // goScene switches the right panel; the new one staggers in.
@@ -286,10 +288,8 @@ func (a *app) goScene(s int) {
 		return
 	}
 	a.switchScene(func() {
-		if a.scene == sceneEval {
-			a.eval = nil
-		}
 		if s == sceneTrash {
+			a.pf = pfNone // the trash takes the focus
 			a.enterTrashSun()
 		} else if a.scene == sceneTrash { // the disk chart grows back
 			a.sun.intro, a.sun.key = a.now, geoKey{}
@@ -298,24 +298,13 @@ func (a *app) goScene(s int) {
 	})
 }
 
-// switchScene lets the current panel's parts stagger out (130ms), then applies the change
-// and lets the new panel's parts stagger in.
+// switchScene applies the change at once (no stagger-out: the layout springs start moving on
+// the very frame of the press) and lets the new panel's parts stagger in.
 func (a *app) switchScene(apply func()) {
 	a.sceneNext++
-	if !a.motion() {
-		apply()
-		a.panelT0, a.sceneT0 = a.now, time.Time{}
-		return
-	}
-	seq := a.sceneNext
-	a.sceneT0 = a.now
-	a.after(130*time.Millisecond, func() {
-		if seq != a.sceneNext {
-			return
-		}
-		apply()
-		a.panelT0, a.sceneT0 = a.now, time.Time{}
-	})
+	apply()
+	a.panelT0, a.sceneT0 = a.now, time.Time{}
+	a.frame = true
 }
 
 // ------------------------------------------------------------------------------------------
@@ -332,25 +321,51 @@ type askState struct {
 	t0   time.Time
 }
 
+// The confirm is a message bubble that grows out of the right panel's top-left corner; the
+// panel behind it quiets down, and a click anywhere else or Esc dismisses it.
 func (a *app) dialogs(c *ui.Context) {
 	if a.ask != nil {
-		open := true
-		ui.Modal(c.Key("ask"), &open, func() { a.askBox(c) })
-		if !open {
-			a.ask = nil
+		if ui.Box(c.Key("askx")).Absolute().Top(0).Left(0).Fill().ZIndex(60).Clicked() {
+			a.askClose()
 		}
+		if c.Shortcut(0, ui.KeyEscape) {
+			a.askClose()
+		}
+	}
+	q, live := a.ask, true
+	if q == nil && a.askOut != nil {
+		q, live = a.askOut, false
+		if a.progress(a.askOutT0, 0, 170*time.Millisecond) >= 1 {
+			q, a.askOut = nil, nil
+		}
+	}
+	if q != nil {
+		a.askBox(c, q, live)
 	}
 	if a.showSettings {
 		a.settingsModal(c)
 	}
 }
 
-func (a *app) askBox(c *ui.Context) {
-	pal := a.pal
-	q := a.ask
-	if q == nil {
-		return
+// askClose lets the bubble shrink back into its corner.
+func (a *app) askClose() {
+	if a.ask != nil {
+		a.askOut, a.askOutT0, a.ask = a.ask, a.now, nil
 	}
+}
+
+// dropAsk forgets a confirm whose subject is gone.
+func (a *app) dropAsk(q *askState) {
+	if a.ask == q {
+		a.ask = nil
+	}
+	if a.askOut == q {
+		a.askOut = nil
+	}
+}
+
+func (a *app) askBox(c *ui.Context, q *askState, live bool) {
+	pal := a.pal
 	var title, ok string
 	danger, binIcon := true, false
 	var body func()
@@ -358,7 +373,7 @@ func (a *app) askBox(c *ui.Context) {
 	case askRisky:
 		n := q.node
 		if a.t == nil || !a.t.Attached(n) {
-			a.ask = nil
+			a.dropAsk(q)
 			return
 		}
 		title, ok = "确认删除个人数据？", "仍然移至"+trashName()
@@ -369,7 +384,7 @@ func (a *app) askBox(c *ui.Context) {
 	case askEmpty:
 		items := a.bin.List()
 		if len(items) == 0 {
-			a.ask = nil
+			a.dropAsk(q)
 			return
 		}
 		var size int64
@@ -380,11 +395,32 @@ func (a *app) askBox(c *ui.Context) {
 		binIcon = true
 		body = func() { a.emptyBody(c, items, size) }
 	}
-	k := a.progress(q.t0, 0, 340*time.Millisecond)
-	e := float32(bez(.2, .9, .3, 1.1, k))
-	box := ui.Column(c.Key("askbox")).Width(380).Padding(18, 20, 16, 20).Gap(12).FontSize(12.5)
-	if k < 1 {
-		box.Scale(.35+.65*e, .35+.65*e).Opacity(min(1, float32(k)/.7))
+	W, _ := c.Size()
+	surf := pal.panel2
+	if !pal.dark {
+		surf = pal.panel
+	}
+	bw := min(372, max(300, a.rightW-28))
+	box := ui.Column(c.Key("askbox")).Absolute().Left(W-14-bw).Top(14).Width(bw).ZIndex(61).
+		Padding(16, 16, 12, 16).Gap(10).FontSize(12.5).Background(surf).Radius(4, 16, 16, 16).
+		Shadow(0, 24, 60, -18, ui.RGBA(0, 0, 0, .7)).TransformOrigin(0, 0)
+	if live {
+		// translate(-6,-6) scale(.35), overshoot to 1.015 at 70%, settle
+		k := a.progress(q.t0, 0, 340*time.Millisecond)
+		if k < 1 {
+			e := float32(bez(.2, .9, .3, 1.1, k))
+			var sc float32
+			if e < .7 {
+				sc = .35 + (1.015-.35)*e/.7
+			} else {
+				sc = 1.015 - .015*(e-.7)/.3
+			}
+			box.Translate(-6*(1-min(1, e/.7)), -6*(1-min(1, e/.7))).Scale(sc, sc).Opacity(min(1, e/.7))
+		}
+	} else {
+		// back into the corner: translate(-4,-4) scale(.6), fading
+		e := float32(bez(.4, 0, 1, 1, a.progress(a.askOutT0, 0, 170*time.Millisecond)))
+		box.Translate(-4*e, -4*e).Scale(1-.4*e, 1-.4*e).Opacity(1 - e).PassThrough()
 	}
 	part := func(el ui.Element, i int) ui.Element {
 		pk := a.progress(q.t0, time.Duration(90+i*45)*time.Millisecond, 240*time.Millisecond)
@@ -408,15 +444,15 @@ func (a *app) askBox(c *ui.Context) {
 		}), 0)
 		part(ui.Column(c.Key("ab")).Gap(6).Children(body), 1)
 		part(ui.Row(c.Key("af")).Gap(8).Justify(ui.End).Padding(4, 0, 0, 0).Children(func() {
-			if a.btn(c.Key("no"), "取消", btnPlain, false, nil).Clicked() {
-				a.ask = nil
+			if a.btn(c.Key("no"), "取消", btnPlain, false, nil).Clicked() && live {
+				a.askClose()
 			}
 			kind := btnDanger
 			if !danger {
 				kind = btnPrimary
 			}
-			if a.btn(c.Key("ok"), ok, kind, false, nil).Clicked() {
-				a.ask = nil
+			if a.btn(c.Key("ok"), ok, kind, false, nil).Clicked() && live {
+				a.askClose()
 				switch q.kind {
 				case askRisky:
 					a.trashOne(q.node)
@@ -521,7 +557,7 @@ func (a *app) emptyBody(c *ui.Context, items []trash.Item, size int64) {
 			})
 		}
 		if a.btn(c.Key("keep"), fmt.Sprintf("还原这 %d 项", hab.n), btnPlain, true, nil).AlignSelf(ui.Start).Clicked() {
-			a.ask = nil
+			a.askClose()
 			a.restore(hab.ids)
 		}
 	})

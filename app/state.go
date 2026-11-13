@@ -43,11 +43,38 @@ type app struct {
 	cancel   context.CancelFunc
 	scanErr  error
 
-	t    *scan.Tree
-	ev   *safety.Evaluator
-	tsun trashSun // the trash scene's chart
-	rightTw tween   // the right column's width: wider in the trash scene
-	rightW  float32
+	t                *scan.Tree
+	ev               *safety.Evaluator
+	tsun             trashSun // the trash scene's chart
+	rightSp          spring   // the right column's width: none before the first scan, wider when a panel has focus
+	rightW           float32
+	rightTo          float32
+	rightEnter       bool // pushing in for the first time: the content keeps its final width
+	shown            bool
+	pf               int // which panel has focus: pfNone, pfList or pfDetail (the trash is the scene)
+	rightHL          float32
+	wL, wD, wT       float32 // each panel's width this frame
+	wTto             float32
+	wLsp, wDsp, wTsp spring
+	sz               int       // window size class
+	slim             bool      // the list in its short form (it is narrow: something else has focus)
+	slimT0           time.Time // the panels changed form
+	detFull          bool      // the detail in full (focused) or as a summary
+	detT0            time.Time
+	askSp            spring
+	tvSp             spring
+	winW             float32
+	chartR           ui.Rect // the chart, last frame (the bin sits in its corner)
+	hDsp, hTsp       spring  // detail and trash panel heights; the list takes the rest
+	tvTw             tween   // the left side's trash-scene state
+	tvK              float32
+	tvOn             bool
+	keepMode         bool      // tests: hold a.mode as set
+	burstT0          time.Time // the clean button's press
+	sheenOn          bool      // the big button: hovered last frame, and when its sheen started
+	sheenT0          time.Time
+	upOn             bool
+	upT0             time.Time
 
 	ver int // bumped on every tree change, invalidates cached geometry and rows
 
@@ -95,7 +122,6 @@ type app struct {
 	showSettings bool
 	scene        int
 	anal         *analysis
-	eval         *evalSheet
 
 	timers  []timer
 	procs   []string // running programs, lower case
@@ -117,6 +143,10 @@ type app struct {
 	shakeN       int32
 	shakeT0      time.Time
 	ask          *askState
+	askOut       *askState // closing: shrinks back into its corner
+	askOutT0     time.Time
+	askTw        tween // the right panel quiets while a confirm is open
+	askK         float32
 	compOpen     bool // 构成与最大的文件
 	prevShut     bool // 预览 (open by default)
 	whyOpen      bool
@@ -181,7 +211,7 @@ func (a *app) startScan(root string) {
 	a.scanStart = time.Now()
 	prog := a.prog
 	opt := scan.Options{Progress: prog, Exclude: a.excludes(), CrossDevice: a.set.CrossDevice}
-	a.anal, a.eval, a.scene = nil, nil, sceneBrowse
+	a.anal, a.scene = nil, sceneBrowse
 	a.sceneNext, a.sceneT0 = a.sceneNext+1, time.Time{}
 	go func() {
 		t, err := scan.Scan(ctx, root, opt)
