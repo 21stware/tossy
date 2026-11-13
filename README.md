@@ -1,88 +1,104 @@
 # Tossy
 
-Tossy 是一个磁盘清理分析器：用可下钻的旭日图展示磁盘被什么占满，给每一项标出安全等级，并提供"只动安全内容"的一键自动清理。它包含一个原生桌面应用（基于 [MyGo](https://github.com/egoist/mygo)）和一个命令行工具，两者共用同一套 Go 引擎。
+Tossy is a disk cleanup analyser. It shows what fills your disk as a sunburst you can drill into, gives everything a safety verdict, and cleans only what is safe to clean in one click. Anything it removes can be put back until you empty its trash.
 
-支持 macOS、Linux 和 Windows。
+It ships as a native desktop app (built with [MyGo](https://github.com/egoist/mygo)) and a command-line tool, both on the same Go engine. It runs on macOS, Linux and Windows.
 
-## 功能
+![Tossy: the disk as a sunburst, with the folder list and the trash bin](docs/screenshots/overview.png)
 
-### 扫描与可视化
+## Features
 
-- **高速并行扫描**：多线程遍历目录树，生成紧凑、无指针的树结构，可承载数百万个条目。macOS 上用 `getattrlistbulk(2)` 批量读取目录项，Linux 用 `fstatat`，Windows 用 `FindFirstFile` 直接拿到大小与时间；自动跳过伪文件系统，默认不跨卷（可在设置中开启）。
-- **旭日图**：按目录结构逐层展示占用，点击扇区下钻、面包屑或 Backspace 返回上级；删除或恢复时扇区会平滑变形。扫描过程中显示雷达扫描动画和实时计数。
-- **列表与详情**：右侧面板显示当前文件夹的子项（按大小排序），选中文件后滑出详情，展示路径、大小、安全判定和原因。
-- **磁盘用量**：顶部显示所在卷的总容量与剩余空间。
+### See what fills the disk
 
-### 安全判定
+- **Fast parallel scan** that builds a compact tree able to hold millions of entries. On macOS it reads whole batches of directory entries per syscall (`getattrlistbulk`), on Linux it uses `fstatat`, and on Windows it takes sizes straight from `FindFirstFile`. Pseudo filesystems are skipped, and other volumes are left alone unless you allow it.
+- **Sunburst chart.** Click a sector to drill in; use the centre, the breadcrumbs or Backspace to go back up. Sectors morph when things are removed or restored. While scanning, the chart is a radar sweep with live counters.
+- **List and detail.** The right-hand panel lists the folder in focus by size; selecting a file slides in its detail with the verdict and the reason for it.
+- **Disk line** at the top shows how full the volume is.
 
-引擎内置约 90 条规则，按名称和路径为每个节点给出四个等级之一，子项没有单独规则时继承父级判定：
+![Drilled into a projects folder, with the list in focus](docs/screenshots/browse.png)
 
-| 等级 | 含义 | 示例 |
+### Safety verdicts
+
+About 90 built-in rules give every item one of four levels. An item without a rule of its own inherits its parent's verdict.
+
+| Level | Meaning | Examples |
 | --- | --- | --- |
-| 安全 | 可重建或可重新下载 | 应用缓存、`node_modules`、`__pycache__`、npm / pnpm / Cargo / Go / Maven / Gradle 缓存、Xcode DerivedData、Homebrew 缓存 |
-| 需确认 | 大概率可删，但应由用户确认 | Docker / 虚拟机磁盘、iOS 模拟器、本地大模型（Ollama、LM Studio、Hugging Face）、Python 虚拟环境、构建输出、下载目录、AI 编程助手会话记录 |
-| 有风险 | 个人数据 | 文档、桌面、照片、邮件、`.ssh`、`.gnupg`、`.git` |
-| 受保护 | 操作系统需要，Tossy 绝不删除 | `/System`、`/usr`、`C:\Windows`、`WinSxS` 等 |
+| Safe | Rebuilt or re-downloaded on demand | App caches, `node_modules`, `__pycache__`, npm / pnpm / Cargo / Go / Maven / Gradle caches, Xcode DerivedData, Rust `target`, Homebrew cache |
+| Review | Probably fine, but you should confirm | Docker and VM disks, iOS simulators, local models (Ollama, LM Studio, Hugging Face), Python virtualenvs, build output, Downloads, AI coding-assistant sessions |
+| Personal | Your own data | Documents, Desktop, Photos, Mail, `.ssh`, `.gnupg`, `.git` |
+| Protected | The OS needs it; Tossy never deletes it | `/System`, `/usr`, `C:\Windows`, `WinSxS` |
 
-部分规则会检查标记文件（例如 `Podfile`、`package.json`、`go.mod`），只在真正的项目目录里匹配 `dist`、`build`、`vendor` 之类的通用名称。
+Generic names such as `dist`, `build`, `target` or `vendor` only match inside a real project, recognised by marker files like `package.json`, `Cargo.toml` or `go.mod`.
 
-### 开发者目录
+### Developer folders
 
-- **Git 仓库保护**：删除 Git 仓库或工作树前，会询问 git 是否有未提交的修改、未跟踪的文件，或只存在于本地、尚未推送的提交，并说明删除会丢失什么。
-- **工作树一览**：仓库会列出共享同一对象库的所有工作树（AI 编程助手常会留下很多）。
-- **项目构建缓存**：项目文件夹会列出其中的依赖与构建产物。
+- **Git checkouts are judged as a whole.** Before you delete a repository or worktree, Tossy asks git about uncommitted changes, untracked files and commits that exist only on this machine, and tells you what would be lost.
+- **Worktrees at a glance.** A repository lists every worktree that shares its object store; AI coding agents tend to leave many behind.
+- **Build caches per project.** A project folder lists the dependency and build caches inside it, with one button to clean them.
 
-### 清理
+![A Git worktree: what each working tree would lose, and its rebuildable caches](docs/screenshots/git.png)
 
-- **一键自动清理**：扫描全盘的规则匹配项和已学会的清理习惯，先播放分析动画并显示评估清单（两者都可在设置中关闭），再把计划内的条目扔进废纸篓。被选中的只有可按需重建的内容和与你以往手动删除相同的内容。
-- **使用中保护**：最近几分钟内有写入的条目（默认 10 分钟）和正在运行的应用的缓存会被跳过，避免把缓存从运行中的程序底下抽走。
-- **手动删除**：可通过按钮、右键菜单、键盘（Delete / ⌘⌫）或拖到废纸篓桶删除单项。受保护的条目会抖动并说明原因，个人数据先询问，其余立即删除并可撤销。
-- **清理习惯学习**：Tossy 会从手动删除中学习。每次删除被归纳为"父文件夹 + 形态"（子文件夹、扩展名或"超过两个月"），同一签名累计到一定分数后成为习惯，下次自动清理会一并带走并说明理由；恢复由习惯选中的条目会加倍扣分。习惯可在设置中查看、遗忘或关闭。
+### Cleaning
 
-### 废纸篓
+- **Auto Clean** sweeps the whole scan using the rules and your learned habits, shows what it finds as it goes, and then throws the plan into the trash. It only takes things that are regenerated on demand, or that match something you have deleted by hand before.
+- **In-use protection.** Items written in the last few minutes (10 by default) and the caches of apps that are running are skipped, so a clean never pulls caches out from under a running program.
+- **Delete by hand** with the row's bin button, the context menu, the keyboard (Delete / ⌘⌫), or by dragging a sector onto the bin. Protected items shake and say why. Personal data asks first. Everything else goes at once, with an undo.
+- **Learns your habits.** Each manual deletion is generalised to "parent folder + shape" (a sub-folder, a file extension, or "older than two months"). Once a shape has been seen often enough it becomes a habit, and Auto Clean takes the same kind of item next time and says why. Restoring an item a habit picked counts double against it. You can review, forget or turn off habits in Settings.
 
-- **只记账、不搬动**：放入 Tossy 废纸篓只是在日志中记下标记，文件留在原处，也不会动系统废纸篓。恢复就是撤掉标记，"清空"才会在原位永久删除被标记的路径。
-- **废纸篓视图**：桶的大小随内容增长（从桌面纸篓到垃圾箱），条目以按安全等级着色的小球堆在桶里；旁边的"来源图"按原始路径重建出这些内容来自哪里，悬停小球、列表行和扇区会互相高亮。条目按删除原因（自动清理、习惯、手动）分组，并给出安全等级分布。
-- **恢复与清空**：可逐项或批量恢复；清空前桶会弹出确认气泡，确认后小球逐个消失，释放的空间同步反映在磁盘用量上。
-- 兼容旧版本日志中真正移入系统废纸篓的条目（macOS 废纸篓、freedesktop.org Trash、Windows 回收站），仍可恢复或清除。
+![Auto Clean analysing: the chart switches to safety colours](docs/screenshots/analysis.png)
 
-### 外观与语言
+![Deleting personal data asks first](docs/screenshots/ask.png)
 
-- **十种风格**：HUD、机甲、经典、蓝图、终端、工业、墨水屏、欢乐、粉粉、绿绿。每种风格有自己的扇区画法、仪表层和专属特效（例如墨水屏的刷新闪烁、终端的 CRT 开机和逐字命令行、蓝图先画线稿再上色）。
-- **减弱动态效果**选项。
-- **多语言**：简体中文、繁体中文、English、日本語，默认跟随系统语言，也可在设置中指定。
+### The trash
 
-### 快捷键（桌面应用）
+- **A mark, not a move.** Putting something in Tossy's trash only records a mark in a journal. The file stays where it is, and the system trash is never touched. Restoring drops the mark; emptying deletes exactly the marked paths, in place, for good.
+- **Trash view.** The bin grows with what is in it, from a desk basket to a skip. Items lie in it as balls coloured by safety level. Next to it, a chart rebuilds where the contents came from, and hovering a ball, a row or a sector lights up the other two. Items are grouped by why they were removed (Auto Clean, a habit, or by hand), with a safety breakdown.
+- **Restore and empty.** Restore items one at a time or all at once. Before emptying, the bin asks in a speech bubble; then the balls vanish one by one and the freed space shows on the disk line.
+- Items that older versions really moved into the system trash (macOS Trash, freedesktop.org Trash, Windows Recycle Bin) can still be restored or purged.
 
-| 按键 | 作用 |
+![The trash: where its contents came from, and the bin](docs/screenshots/trash.png)
+
+### Styles and languages
+
+- **Ten styles:** HUD, Mech, Classic, Blueprint, Terminal, Industrial, E-ink, Happy, Pinky and Greeny. Each has its own way of painting sectors, its own instrument layer and its own effects, such as the e-ink refresh flash, the terminal's CRT power-on with a typed command line, and the blueprint's linework drawn before its washes.
+- **Reduce motion** option.
+- **Languages:** English, Simplified Chinese, Traditional Chinese and Japanese. Follows the system language by default.
+
+![All ten styles](docs/screenshots/styles.png)
+
+### Settings
+
+Settings are grouped into Appearance, Scan (default location, excluded paths, crossing volumes), Cleaning (review sheet, analysis sweep, in-use protection), Clean habits and Trash. They are saved to `settings.json` in the state folder.
+
+![Settings](docs/screenshots/settings.png)
+
+### Keyboard shortcuts
+
+| Key | Action |
 | --- | --- |
-| ↑ / ↓ | 在列表中移动选择 |
-| Enter | 打开选中的文件夹 |
-| Backspace | 返回上一级 |
-| Delete、⌘⌫ | 把选中项移入废纸篓 |
-| Esc | 退出分析 / 返回磁盘视图 / 关闭详情 / 返回上一级 |
-| ⌘,（Ctrl+,） | 打开设置 |
+| ↑ / ↓ | Move through the list |
+| Enter | Open the selected folder |
+| Backspace | Go up one level |
+| Delete, ⌘⌫ | Move the selection to the trash |
+| Esc | Leave the analysis / the trash view / the detail, or go up |
+| ⌘, (Ctrl+,) | Open Settings |
 
-### 设置
-
-设置分为外观、扫描（默认扫描位置、排除路径、是否跨卷）、清理（评估清单、分析动画、使用中保护）、清理习惯和废纸篓五类，保存在状态目录的 `settings.json` 中。
-
-## 命令行
+## Command line
 
 ```
-tossy scan  [-w workers] [-x] [-top n] [path]   扫描并列出最大的条目
-tossy eval  [-review] [-top n] [path]           扫描后列出可安全清理的内容（只读）
-tossy clean [-review] [-yes] [path]             把安全条目（及已学会的习惯）移入废纸篓；不加 -yes 时只演练
-tossy rm path...                                手动移入废纸篓（Tossy 会从中学习）
+tossy scan  [-w workers] [-x] [-top n] [path]   scan and print the largest entries
+tossy eval  [-review] [-top n] [path]           scan, then list what is safe to clean (read-only)
+tossy clean [-review] [-yes] [path]             move safe items (and learned habits) to the trash; dry run without -yes
+tossy rm path...                                move to the trash by hand (Tossy learns from this)
 tossy trash [list | restore id... | empty [id...]]
 tossy habit [list | forget key]
 ```
 
-`path` 默认为当前目录。`-review` 会把"需确认"等级的条目也列入。
+`path` defaults to the current directory. `-review` also includes review-level items.
 
-## 构建与运行
+## Build and run
 
-需要 Go 1.27 及以上。
+Requires Go 1.27 or later.
 
 ```bash
 go build -o bin/tossy ./cmd/tossy
@@ -100,30 +116,37 @@ go run github.com/egoist/mygo/cmd/mygo build ./app
 go test ./...
 ```
 
-`mygo dev` 运行带热重载的开发版，`mygo build` 生成正式应用（macOS 上为 .app 和 .dmg）。打包配置见 [app/mygo.json](app/mygo.json)，产物输出到 `app/build/`。
+`mygo dev` runs a development build with live reload. `mygo build` builds the release app (a `.app` and a `.dmg` on macOS) into `app/build/`; see [app/mygo.json](app/mygo.json).
 
-## 数据位置
+The screenshots in this README are rendered headlessly by a test, in English, from a synthetic home folder:
 
-Tossy 的状态（废纸篓日志、`habits.json`、`settings.json`）保存在系统配置目录下的 `Tossy` 文件夹：
+```bash
+cd app && TOSSY_README_SHOTS=$PWD/../docs/screenshots go test -run TestReadmeShots .
+```
 
-- macOS：`~/Library/Application Support/Tossy`
-- Linux：`~/.config/Tossy`
-- Windows：`%AppData%\Tossy`
+## Where data lives
 
-从旧名 FanFree 升级时，首次启动会把原来的 `FanFree` 文件夹改名为 `Tossy`，废纸篓记录、清理习惯和设置都会保留。
+Tossy keeps its state (the trash journal, `habits.json` and `settings.json`) in a `Tossy` folder in the user config directory:
 
-可用环境变量 `TOSSY_STATE` 指定其他位置，`TOSSY_THEME` 临时指定风格（如 `TOSSY_THEME=blueprint`），`TOSSY_LANG` 临时指定界面语言。
+- macOS: `~/Library/Application Support/Tossy`
+- Linux: `~/.config/Tossy`
+- Windows: `%AppData%\Tossy`
 
-## 目录结构
+Tossy used to be called FanFree. On first run, an existing `FanFree` folder is renamed to `Tossy`, so the trash, habits and settings carry over.
+
+Environment variables: `TOSSY_STATE` puts the state somewhere else, `TOSSY_THEME` picks a style (for example `TOSSY_THEME=blueprint`), and `TOSSY_LANG` picks a language (`en`, `zh-Hans`, `zh-Hant`, `ja`).
+
+## Layout
 
 ```
-cmd/tossy        命令行工具
-app/             MyGo 桌面应用
-engine/scan      并行扫描与紧凑树
-engine/safety    安全规则与判定
-engine/trash     废纸篓日志、恢复与清空
-engine/habit     从手动删除中学习清理习惯
-engine/gitrepo   Git 仓库 / 工作树状态检查
-engine/statedir  状态目录定位与旧目录迁移
-prototype/       HTML 交互原型
+cmd/tossy        command-line tool
+app/             MyGo desktop app
+engine/scan      parallel scanner and compact tree
+engine/safety    safety rules and verdicts
+engine/trash     trash journal, restore and empty
+engine/habit     learning clean habits from manual deletions
+engine/gitrepo   Git repository and worktree status
+engine/statedir  state folder location and FanFree migration
+prototype/       interactive HTML prototype
+docs/            README screenshots
 ```

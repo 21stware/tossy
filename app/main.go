@@ -410,7 +410,7 @@ func (a *app) legend(c *ui.Context) {
 		for lv, name := range levelTitles {
 			ui.Row(c.Key(lv)).Gap(7).AlignItems(ui.Center).Children(func() {
 				ui.Box(c).Size(8, 8).Radius(2).Background(pal.level[lv])
-				ui.Text(c, name).FontSize(11.5).TextColor(pal.t2)
+				ui.Text(c, T(name)).FontSize(11.5).TextColor(pal.t2)
 				ui.Text(c, fmtSize(sums[lv])).FontSize(11).Font(pal.mono).TextColor(pal.t4)
 			})
 		}
@@ -821,10 +821,13 @@ func (a *app) sceneOn() int {
 	return sceneBrowse
 }
 
+// diskUsageOf is diskUsage; tests swap it to show a fixed volume.
+var diskUsageOf = diskUsage
+
 func (a *app) diskBar(c *ui.Context) ui.Element {
 	pal := a.pal
 	if a.disk.ver != a.ver+1 || !a.disk.ok {
-		a.disk.total, a.disk.free, a.disk.ok = diskUsage(a.root)
+		a.disk.total, a.disk.free, a.disk.ok = diskUsageOf(a.root)
 		a.disk.ver = a.ver + 1
 	}
 	d := a.disk

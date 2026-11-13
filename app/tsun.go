@@ -521,7 +521,7 @@ func (a *app) trashSafety(c *ui.Context) {
 			}
 			ui.Row(c.Key(lv)).Gap(6).AlignItems(ui.Center).Children(func() {
 				ui.Box(c).Size(6, 6).Radius(3).Background(pal.level[lv]).Shrink(0)
-				ui.Text(c, name).FontSize(11).TextColor(pal.t2).SingleLine().Shrink(1).Ellipsis("…")
+				ui.Text(c, T(name)).FontSize(11).TextColor(pal.t2).SingleLine().Shrink(1).Ellipsis("…")
 				ui.Spacer(c).MinWidth(10)
 				ui.Text(c, fmtNum(int64(cnt[lv]))).FontSize(10).Font(pal.mono).TextColor(pal.t4).SingleLine().Shrink(0)
 				ui.Text(c, fmtSize(sums[lv])).FontSize(10.5).Font(pal.mono).TextColor(pal.t3).SingleLine().Shrink(0)

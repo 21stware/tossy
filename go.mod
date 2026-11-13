@@ -2,7 +2,11 @@ module github.com/21stware/tossy
 
 go 1.27.3
 
-require github.com/egoist/mygo v0.9.0
+require (
+	github.com/egoist/mygo v0.9.0
+	golang.org/x/image v0.46.0
+	golang.org/x/sys v0.48.0
+)
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
@@ -13,9 +17,7 @@ require (
 	github.com/ulikunitz/xz v0.5.15 // indirect
 	go.digitalxero.dev/rpm v0.3.4 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
-	golang.org/x/image v0.46.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )
 
