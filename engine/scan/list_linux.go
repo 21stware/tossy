@@ -24,7 +24,7 @@ var (
 )
 
 func fromStat(name string, st *syscall.Stat_t) rawEntry {
-	return modeEntry(name, st.Mode, st.Blocks, int64(st.Mtim.Sec), uint64(st.Dev), st.Ino, uint32(st.Nlink))
+	return modeEntry(name, st.Mode, int64(st.Blocks), int64(st.Mtim.Sec), uint64(st.Dev), uint64(st.Ino), uint32(st.Nlink))
 }
 
 func extraRootDevices(string) []string { return nil }
@@ -34,7 +34,7 @@ func defaultExcludes(root string) []string {
 	if root != "/" {
 		return nil
 	}
-	return []string{"/proc", "/sys", "/dev", "/run", "/snap"}
+	return []string{"/proc", "/sys", "/dev", "/run", "/snap", "/mnt/wslg"}
 }
 func statDev(st *syscall.Stat_t) uint64 { return uint64(st.Dev) }
 

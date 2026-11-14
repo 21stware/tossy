@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/21stware/tossy/engine/proc"
 	"github.com/21stware/tossy/engine/scan"
 )
 
@@ -22,6 +24,7 @@ var appCaches = []struct {
 	{"google chrome", "Chrome", []string{"/google/chrome/", `\google\chrome\`}},
 	{"chrome.exe", "Chrome", []string{`\google\chrome\`}},
 	{"chrome", "Chrome", []string{"/google-chrome/", "/chromium/"}},
+	{"chromium", "Chromium", []string{"/chromium/", `\chromium\`}},
 	{"microsoft edge", "Edge", []string{"/microsoft edge/", `\microsoft\edge\`}},
 	{"msedge", "Edge", []string{`\microsoft\edge\`, "/microsoft-edge/"}},
 	{"brave", "Brave", []string{"/bravesoftware/", `\bravesoftware\`}},
@@ -30,6 +33,7 @@ var appCaches = []struct {
 	{"discord", "Discord", []string{"/discord/", `\discord\`}},
 	{"code helper", "VS Code", []string{"/code/", `\code\`}},
 	{"electron", "VS Code", []string{"/code/"}},
+	{"code", "VS Code", []string{"/.config/code/", "/.vscode/"}}, // Linux: the process is "code"
 	{"code.exe", "VS Code", []string{`\code\`}},
 	{"xcode", "Xcode", []string{"/deriveddata/", "/xcode/"}},
 	{"simulator", "Simulator", []string{"/coresimulator/"}},
@@ -39,9 +43,9 @@ var appCaches = []struct {
 func runningApps() []string {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("tasklist", "/fo", "csv", "/nh")
+		cmd = proc.Command(context.Background(), "tasklist", "/fo", "csv", "/nh")
 	} else {
-		cmd = exec.Command("ps", "-axo", "comm=")
+		cmd = proc.Command(context.Background(), "ps", "-axo", "comm=")
 	}
 	out, err := cmd.Output()
 	if err != nil {

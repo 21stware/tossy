@@ -65,8 +65,8 @@ func TestGitWorktrees(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		tt.Frame()
 	}
-	// the sizes are of the disk's blocks, which differ by filesystem (ext4 gives a directory 4 KB,
-	// APFS none): 588.0 KB and 1.76 MB on macOS
+	// sizes as this file system reports them: allocated blocks on Unix, which differ by file
+	// system (ext4 gives a directory 4 KB, APFS none), file lengths on Windows
 	var devSize, famSize int64
 	for _, d := range a.devCaches(w2) {
 		devSize += d.size

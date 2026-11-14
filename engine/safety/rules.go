@@ -75,16 +75,25 @@ var builtin = func() *ruleSet {
 		add(id, names, lv, reason, tag, "", "pick")
 		rs.all[len(rs.all)-1].Markers = strings.Split(strings.ToLower(markers), "|")
 	}
-	const home = `^(/users|/home|c:/users)/[^/]+`
+	// A home folder: macOS, Linux (and root's), Windows on any drive. Paths are normalised, so
+	// Windows ones read "c:/users/me".
+	const home = `^(/users/[^/]+|/home/[^/]+|/root|[a-z]:/users/[^/]+)`
 
 	// ---------- safe: regenerated or re-downloaded on demand
 	add("user-caches", "caches", Safe, "应用缓存，删除后应用会按需重建", "缓存", `^/users/[^/]+/library/caches$`, "split")
-	add("xdg-cache", ".cache", Safe, "用户级缓存（pip / yarn / 浏览器等），可安全清理", "缓存", `^/home/[^/]+/\.cache$|^/users/[^/]+/\.cache$`, "split")
+	add("xdg-cache", ".cache", Safe, "用户级缓存（pip / yarn / 浏览器等），可安全清理", "缓存", home+`/\.cache$`, "split")
+	add("flatpak-cache", "cache", Safe, "应用缓存，删除后应用会按需重建", "缓存", home+`/\.var/app/[^/]+/cache$`, "pick")
+	add("win-tool-cache", "cache", Safe, "开发工具下载缓存（pip / Yarn / uv 等），按需重新下载", "包缓存", `/appdata/local/(pip|yarn|uv|pypoetry)/cache$`, "pick")
+	add("gpu-shader-cache", "d3dscache|dxcache|glcache|dxccache|computecache", Safe, "显卡驱动的着色器缓存，游戏与应用运行时自动重建", "缓存", `/appdata/local(low)?/(d3dscache|(nvidia|amd|intel)/(dxcache|glcache|dxccache))$|/\.nv/computecache$`, "pick")
+	add("linux-pkg-cache", "dnf|yum|pkg|packages", Safe, "系统包管理器的下载缓存，软件已安装完成", "包缓存", `^/var/cache/(dnf|yum|pacman/pkg|zypp/packages)$`, "pick")
+	add("win-error-reports", "reportarchive|reportqueue", Safe, "程序崩溃转储与诊断报告，仅用于排错", "诊断", `/microsoft/windows/wer/(reportarchive|reportqueue)$`, "pick")
 	add("gradle-caches", "caches", Safe, "Gradle 依赖与构建缓存，按需重新下载", "包缓存", `/\.gradle/caches$`, "pick")
 	add("xcode-deriveddata", "deriveddata", Safe, "Xcode 编译中间产物，重新编译时自动生成", "构建产物", "", "split")
 	add("ios-devicesupport", "ios devicesupport|watchos devicesupport|tvos devicesupport", Safe, "旧版设备调试符号，连接设备时会重新下载", "开发缓存", "", "split")
 	add("simulator-caches", "caches", Safe, "模拟器缓存，按需重建", "开发缓存", `/coresimulator/caches$`, "pick")
 	add("apt-archives", "archives", Safe, "APT 已下载的安装包，软件已安装完成", "包缓存", `^/var/cache/apt/archives$`, "pick")
+	// global installs come first: they are command-line tools, not a project's dependencies
+	add("npm-global", "node_modules", Review, "全局安装的 npm 命令行工具，删除后需重新 npm install -g", "应用", `/appdata/roaming/npm/node_modules$|/lib/node_modules$|/pnpm/global/[^/]+/node_modules$|/\.bun/install/global/node_modules$`, "")
 	add("node-modules", "node_modules", Safe, "npm 依赖目录，可通过 npm install 重新安装", "依赖", "", "pick")
 	add("pycache", "__pycache__", Safe, "Python 字节码缓存，运行时自动生成", "构建产物", "", "pick")
 	add("npm-cache", ".npm|npm-cache|_cacache", Safe, "npm 下载缓存，等价于 npm cache clean", "包缓存", "", "pick")
@@ -100,14 +109,14 @@ var builtin = func() *ruleSet {
 	add("trash-win", "$recycle.bin", Safe, "回收站中已删除的文件", "回收站", "", "pick")
 	add("trash-xdg", "trash", Safe, "回收站中已删除的文件", "回收站", `/\.local/share/trash$`, "pick")
 	add("user-logs", "logs", Safe, "应用与诊断日志，仅用于排错", "日志", `^/users/[^/]+/library/logs$`, "split")
-	add("win-logs", "logs", Safe, "Windows 组件日志（CBS 等）", "日志", `^c:/windows/logs$`, "pick")
+	add("win-logs", "logs", Safe, "Windows 组件日志（CBS 等）", "日志", `^[a-z]:/windows/logs$`, "pick")
 	add("var-log", "log", Safe, "系统日志，旧日志可安全清理（journalctl --vacuum）", "日志", `^(/private)?/var/log$`, "split")
-	add("win-temp", "temp", Safe, "临时文件，生成它们的进程已不再需要", "临时文件", `^c:/windows/temp$|/appdata/local/temp$`, "pick")
+	add("win-temp", "temp", Safe, "临时文件，生成它们的进程已不再需要", "临时文件", `^[a-z]:/windows/temp$|/appdata/local/temp$`, "pick")
 	add("tmp", "tmp", Safe, "系统临时目录", "临时文件", `^(/private)?/tmp$|^/var/tmp$`, "pick")
-	add("prefetch", "prefetch", Safe, "预读缓存，系统会自动重建", "缓存", `^c:/windows/prefetch$`, "pick")
+	add("prefetch", "prefetch", Safe, "预读缓存，系统会自动重建", "缓存", `^[a-z]:/windows/prefetch$`, "pick")
 	add("win-update-dl", "download", Safe, "Windows 更新下载缓存，更新已安装", "更新缓存", `softwaredistribution/download$`, "pick")
 	add("inetcache", "inetcache", Safe, "Edge / IE 网页缓存", "缓存", "", "pick")
-	add("chromium-cache", "cache|code cache|gpucache", Safe, "浏览器 / Electron 缓存", "缓存", `/(default|profile [0-9]+|[^/]*electron[^/]*|application support/[^/]+)/(cache|code cache|gpucache)$`, "pick")
+	add("chromium-cache", "cache|code cache|gpucache", Safe, "浏览器 / Electron 缓存", "缓存", `/(default|profile [0-9]+|[^/]*electron[^/]*|application support/[^/]+|appdata/(local|roaming)/[^/]+|\.config/[^/]+)/(cache|code cache|gpucache)$`, "pick")
 	add("crashdumps", "crashdumps|diagnosticreports", Safe, "程序崩溃转储与诊断报告，仅用于排错", "诊断", "", "pick")
 
 	// ---------- safe: global toolchain caches
@@ -153,9 +162,11 @@ var builtin = func() *ruleSet {
 	add("colima", ".colima|.lima|.orbstack", Review, "容器虚拟机磁盘，删除会丢失其中的镜像与数据", "虚拟机", "", "pick")
 	add("android-avd", "avd", Review, "Android 模拟器镜像，删除后需重新创建", "开发", `/\.android/avd$`, "pick")
 	add("xcode-archives", "archives", Review, "Xcode 归档，含 dSYM，可能用于线上崩溃符号化", "开发", `/xcode/archives$`, "pick")
+	add("wsl-disk", "ext4.vhdx", Risky, "WSL 发行版的虚拟磁盘，含其中全部 Linux 文件；请用 wsl --unregister 移除发行版", "虚拟机", "", "")
 	add("app-support", "application support|roaming|.config", Review, "应用数据，可能含配置、登录态与本地数据库", "应用数据", "", "")
+	add("xdg-data", "share", Review, "应用数据，可能含配置、登录态与本地数据库", "应用数据", home+`/\.local/share$`, "")
 	add("apps", "applications|program files|program files (x86)|opt|snap", Review, "已安装的应用程序，请通过卸载流程移除", "应用", "", "")
-	add("win-installer", "installer", Review, "MSI 安装缓存，删除会导致程序无法修复或卸载", "系统缓存", `^c:/windows/installer$`, "")
+	add("win-installer", "installer", Review, "MSI 安装缓存，删除会导致程序无法修复或卸载", "系统缓存", `^[a-z]:/windows/installer$`, "")
 	add("package-cache", "package cache", Review, "安装程序包缓存，部分软件修复时需要", "安装缓存", "", "pick")
 	add("hiberfil", "hiberfil.sys", Review, "休眠文件：可执行 powercfg /h off 关闭休眠来释放", "系统", "", "")
 	add("downloads", "downloads", Review, "下载目录，需逐项确认", "下载", "", "")
@@ -179,7 +190,7 @@ var builtin = func() *ruleSet {
 	rs.personal = rs.all[len(rs.all)-1]
 
 	// ---------- protected
-	add("os-top", "system|library|private|usr|bin|sbin|etc|boot|lib|lib64|windows|var|cores", Protected, "操作系统组件，删除会导致系统无法运行", "系统", `^(c:)?/[^/]+$`, "")
+	add("os-top", "system|library|private|usr|bin|sbin|etc|boot|lib|lib64|windows|var|cores|programdata|recovery|$winreagent|efi|lost+found", Protected, "操作系统组件，删除会导致系统无法运行", "系统", `^([a-z]:)?/[^/]+$`, "")
 	add("win-core", "winsxs|system32|syswow64", Protected, "Windows 组件存储，删除会导致系统无法运行", "系统", "", "")
 	add("swap", "pagefile.sys|swapfile.sys|swapfile|sleepimage|swapfile0|swapfile1", Protected, "虚拟内存 / 交换文件，由系统管理", "系统", "", "")
 	seen := map[string]bool{}

@@ -42,7 +42,7 @@ func (s *scanText) sample(cur string, now time.Time, fit func([]string) []string
 	}
 	s.full, s.last = cur, now
 	s.old, s.oldX = s.line, s.x
-	s.line, s.t0 = strings.Join(fit(strings.Split(displayHome(cur), "/")), "/"), now
+	s.line, s.t0 = strings.Join(fit(strings.Split(displayHome(cur), pathSep)), pathSep), now
 	return true
 }
 
@@ -56,13 +56,13 @@ func (a *app) paintScanPath(p *ui.Painter, cx, y, maxW float32, cur string, ang 
 	span := func(t string, c ui.Color) ui.Span { return ui.Span{Text: t, Size: size, Font: "monospace", Color: c} }
 	width := func(t string) float32 { w, _ := p.MeasureText(0, span(t, pal.t4)); return w }
 	fit := func(segs []string) []string { // drop leading folders until it fits
-		for len(segs) > 2 && width(strings.Join(segs, "/")) > maxW {
+		for len(segs) > 2 && width(strings.Join(segs, pathSep)) > maxW {
 			segs = append([]string{"…"}, segs[2:]...)
 		}
 		return segs
 	}
 	if s.sample(cur, now, fit) {
-		depth := len(strings.Split(cur, "/"))
+		depth := len(strings.Split(cur, pathSep))
 		s.blips = append(s.blips, blip{ang: ang, r: .22 + .72*min(1, float32(depth)/14), t0: now})
 		if len(s.blips) > blipMax {
 			s.blips = s.blips[len(s.blips)-blipMax:]
@@ -232,3 +232,6 @@ func (a *app) paintRescan(p *ui.Painter, r ui.Rect) {
 		p.AnimationFrame()
 	}
 }
+
+// pathSep splits the paths the scan reports: "\" on Windows, where "/" never appears in them.
+const pathSep = string(filepath.Separator)

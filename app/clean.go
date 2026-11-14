@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -189,11 +190,19 @@ func appOf(why string) string {
 	return why
 }
 
+// trashName is what the platform calls the bin: Trash on macOS, Recycle Bin on Windows. Linux
+// desktops say Trash (GNOME, KDE), except in Simplified Chinese, where they say 回收站.
 func trashName() string {
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		return T("废纸篓")
+	case "windows":
+		return T("回收站")
 	}
-	return T("回收站")
+	if lang == langZhHans {
+		return "回收站"
+	}
+	return T("废纸篓")
 }
 
 // ------------------------------------------------------------------------------------------
@@ -427,10 +436,28 @@ func (a *app) undo(b *batch) {
 func (a *app) displayPath(i int32) string { return displayHome(a.t.Path(i)) }
 
 func displayHome(p string) string {
-	if home := homeDir(); home != "" && strings.HasPrefix(p, home) {
-		return "~" + p[len(home):]
+	if rest, ok := underHome(p, homeDir()); ok {
+		return "~" + rest
 	}
 	return p
+}
+
+// underHome cuts home off the front of p: "" for home itself, else the rest with its leading
+// separator. Only whole folder names count (/home/ann is not under /home/an), and on Windows
+// the comparison ignores case, as the file system does.
+func underHome(p, home string) (string, bool) {
+	home = strings.TrimRight(home, `/\`)
+	if home == "" || len(p) < len(home) {
+		return "", false
+	}
+	head, rest := p[:len(home)], p[len(home):]
+	if head != home && !(runtime.GOOS == "windows" && strings.EqualFold(head, home)) {
+		return "", false
+	}
+	if rest != "" && rest[0] != '/' && rest[0] != filepath.Separator {
+		return "", false
+	}
+	return rest, true
 }
 
 var _ = scan.None

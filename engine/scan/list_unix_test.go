@@ -3,6 +3,8 @@
 package scan
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"testing"
@@ -10,7 +12,10 @@ import (
 
 // The bulk lister (macOS) must agree with plain lstat on real directories.
 func TestListDirMatchesGeneric(t *testing.T) {
-	dirs := []string{fixture(t), runtime.GOROOT() + "/src/net/http", "/usr/lib"}
+	dirs := []string{fixture(t), "/usr/lib"}
+	if src := filepath.Join(runtime.GOROOT(), "src", "net", "http"); dirExists(src) {
+		dirs = append(dirs, src) // absent when the test binary was cross-compiled
+	}
 	for _, d := range dirs {
 		var a, b []rawEntry
 		if err := listDir(d, &a); err != nil {
@@ -31,4 +36,9 @@ func TestListDirMatchesGeneric(t *testing.T) {
 			}
 		}
 	}
+}
+
+func dirExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }

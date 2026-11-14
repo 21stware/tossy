@@ -7,11 +7,12 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/21stware/tossy/engine/proc"
 )
 
 // Kind of checkout a folder is.
@@ -50,7 +51,7 @@ func ParseDotGitFile(dir, content string) (Kind, string) {
 		return None, ""
 	}
 	gd = strings.TrimSpace(gd)
-	if !filepath.IsAbs(gd) {
+	if !isAbs(gd) {
 		gd = filepath.Join(dir, gd)
 	}
 	gd = filepath.Clean(gd)
@@ -112,7 +113,7 @@ func Family(dir string) []Tree {
 		if g == "" {
 			continue
 		}
-		if !filepath.IsAbs(g) {
+		if !isAbs(g) {
 			g = filepath.Join(wd, g)
 		}
 		p := filepath.Dir(filepath.Clean(g))
@@ -124,7 +125,7 @@ func Family(dir string) []Tree {
 // commonDir is where a linked worktree's repository lives (<repo>/.git).
 func commonDir(gd string) string {
 	if c := strings.TrimSpace(readSmall(filepath.Join(gd, "commondir"))); c != "" {
-		if !filepath.IsAbs(c) {
+		if !isAbs(c) {
 			c = filepath.Join(gd, c)
 		}
 		return filepath.Clean(c)
@@ -208,7 +209,7 @@ func parseStatus(out []byte) Status {
 }
 
 func run(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd := proc.Command(ctx, "git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C")
 	return cmd.Output()
 }
@@ -244,4 +245,11 @@ func Find(ctx context.Context, root string, limit, maxDirs int) (found []string,
 		}
 	}
 	return found, true
+}
+
+// isAbs is filepath.IsAbs, except that on Windows a rooted path without a drive ("/r/main/.git",
+// written by a git that runs under MSYS or by a test) also counts: joining it onto the folder
+// would produce a path that exists nowhere.
+func isAbs(p string) bool {
+	return filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`)
 }

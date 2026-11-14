@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"testing"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -70,8 +71,9 @@ func (a *app) syncSettings() {
 }
 
 // underTest is true under `go test` (no window), where settings must not touch the user's.
+// testing.Testing works whatever the binary is called (app.test.exe on Windows).
 func underTest() bool {
-	return strings.HasSuffix(os.Args[0], ".test") || strings.Contains(os.Args[0], "/_test/")
+	return testing.Testing()
 }
 
 func (a *app) excludes() []string {

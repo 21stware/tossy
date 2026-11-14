@@ -56,7 +56,7 @@ func TestEvaluator(t *testing.T) {
 	}
 	got := map[string]bool{}
 	for _, c := range e.Candidates(0, Safe) {
-		got[tr.Path(c.Node)[len(root)+1:]] = true
+		got[filepath.ToSlash(tr.Path(c.Node)[len(root)+1:])] = true
 	}
 	want := map[string]bool{"proj/node_modules": true, "Downloads/old.dmg": true}
 	if len(got) != len(want) {
@@ -84,6 +84,30 @@ func TestPathRules(t *testing.T) {
 		"/Users/me/go/pkg/mod":                "go-modcache",
 		"/private/var/log":                    "var-log",
 		"/System":                             "os-top",
+		// Windows, on any drive
+		`C:\Users\me\.cache`:                                              "xdg-cache",
+		`D:\Users\me\go\pkg\mod`:                                          "go-modcache",
+		`D:\Windows\Temp`:                                                 "win-temp",
+		`D:\Windows`:                                                      "os-top",
+		`C:\ProgramData`:                                                  "os-top",
+		`C:\Users\me\AppData\Local\pip\cache`:                             "win-tool-cache",
+		`C:\Users\me\AppData\Local\D3DSCache`:                             "gpu-shader-cache",
+		`C:\Users\me\AppData\Local\NVIDIA\DXCache`:                        "gpu-shader-cache",
+		`C:\Users\me\AppData\Roaming\Code\Cache`:                          "chromium-cache",
+		`C:\Users\me\AppData\Local\wsl\{89797847}\ext4.vhdx`:              "wsl-disk",
+		`C:\ProgramData\Microsoft\Windows\WER\ReportArchive`:              "win-error-reports",
+		`C:\Users\me\AppData\Local\Google\Chrome\User Data\Default\Cache`: "chromium-cache",
+		`C:\Users\me\AppData\Roaming\npm\node_modules`:                    "npm-global",
+		"/home/me/.nvm/versions/node/v22.0.0/lib/node_modules":            "npm-global",
+		"/home/me/proj/node_modules":                                      "node-modules",
+		// Linux
+		"/root/.cache":                          "xdg-cache",
+		"/home/me/.config/Code/Cache":           "chromium-cache",
+		"/home/me/.var/app/org.gimp.GIMP/cache": "flatpak-cache",
+		"/home/me/.local/share":                 "xdg-data",
+		"/var/cache/dnf":                        "linux-pkg-cache",
+		"/var/cache/pacman/pkg":                 "linux-pkg-cache",
+		"/lost+found":                           "os-top",
 	}
 	for p, id := range cases {
 		n := Norm(p)
@@ -175,7 +199,7 @@ func TestCheckouts(t *testing.T) {
 	}
 	var got []string
 	for _, n := range e.Checkouts(0, 10) {
-		got = append(got, tr.Path(n)[len(root)+1:])
+		got = append(got, filepath.ToSlash(tr.Path(n)[len(root)+1:]))
 	}
 	if len(got) != 3 {
 		t.Fatalf("checkouts %v", got)
@@ -183,7 +207,7 @@ func TestCheckouts(t *testing.T) {
 	// caches inside a worktree are still cleaned by rule; the worktree itself never is
 	cands := map[string]bool{}
 	for _, c := range e.Candidates(0, Safe) {
-		cands[tr.Path(c.Node)[len(root)+1:]] = true
+		cands[filepath.ToSlash(tr.Path(c.Node)[len(root)+1:])] = true
 	}
 	if !cands["wt/feature/node_modules"] || cands["wt/feature"] {
 		t.Fatalf("candidates %v", cands)
@@ -211,7 +235,7 @@ func TestCheckoutNamedLikeCache(t *testing.T) {
 	}
 	cands := map[string]bool{}
 	for _, c := range e.Candidates(0, Safe) {
-		cands[tr.Path(c.Node)[len(root)+1:]] = true
+		cands[filepath.ToSlash(tr.Path(c.Node)[len(root)+1:])] = true
 	}
 	if cands["src/sccache"] || !cands["src/sccache/node_modules"] || !cands["home/ccache"] {
 		t.Fatalf("candidates %v", cands)

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"os/signal"
 	"runtime"
 	"sort"
@@ -104,7 +105,7 @@ func cmdScan(args []string) {
 		n := &t.Nodes[c]
 		kind := " "
 		if n.IsDir() {
-			kind = "/"
+			kind = string(filepath.Separator)
 		}
 		fmt.Printf("  %10s  %5.1f%%  %s%s\n", size(n.Size), 100*float64(n.Size)/float64(max(s.Bytes, 1)), t.Name(c), kind)
 	}

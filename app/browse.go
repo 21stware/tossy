@@ -60,7 +60,7 @@ func (a *app) browsePanel(c *ui.Context) {
 		}
 		if (a.fileOn || k < 1) && a.t != nil && a.t.Attached(a.detNode) {
 			ui.Column(c.Key("bdet")).Absolute().Top(0).Left(0).Fill().Translate(dx, 0).Children(func() {
-				ui.Row(c.Key("dback")).Padding(14, 16, 0, 10).AlignItems(ui.Center).DragWindow().Children(func() {
+				ui.Row(c.Key("dback")).Padding(rightTop(c), 16, 0, 10).AlignItems(ui.Center).DragWindow().Children(func() {
 					b := a.btn(c.Key("back"), a.name(a.focus), btnGhost, true, func() { icon(c, icoBack, 15, pal.t2, 2) }).
 						Tooltip(T("返回列表（Esc）")).Shrink(1)
 					if b.Clicked() && a.fileOn {
@@ -79,7 +79,7 @@ func (a *app) listHeader(c *ui.Context) ui.Element {
 	if a.slim {
 		pl = 16
 	}
-	return ui.Row(c.Key("lh")).Padding(14, pl, 8, pl).Gap(8).AlignItems(ui.Center).DragWindow().Children(func() {
+	return ui.Row(c.Key("lh")).Padding(rightTop(c), pl, 8, pl).Gap(8).AlignItems(ui.Center).DragWindow().Children(func() {
 		if a.t != nil && a.focus != 0 {
 			if a.btn(c.Key("lup"), "", btnGhost, true, func() { icon(c, icoUp, 15, pal.t2, 2) }).Tooltip(T("返回上级（Esc）")).Clicked() && a.anal == nil {
 				a.zoomTo(a.t.Nodes[a.focus].Parent)
@@ -656,4 +656,14 @@ func printable(b []byte) string {
 		}
 	}
 	return string(out)
+}
+
+// rightTop is where the right column's header starts. On Windows and Linux the window buttons
+// sit in the top-right corner, over this column: the header moves down below them. On macOS
+// the controls are on the left and the header keeps its place.
+func rightTop(c *ui.Context) float32 {
+	if bar := c.TitleBar(); bar.Right > 0 {
+		return max(14, bar.Bottom+2)
+	}
+	return 14
 }
