@@ -178,11 +178,13 @@ func (a *app) openSettings() {
 		return
 	}
 	a.setWin = mygo.NewWindow(mygo.WindowOptions{
-		Title: T("设置"), Width: 820, Height: 580, MinWidth: 720, MinHeight: 440,
-		StateKey: "settings", Content: ui.View(a.settingsView),
+		// the key moved with the compact layout, so a size saved for the old one is not restored
+		Title: T("设置"), Width: 740, Height: 580, MinWidth: 640, MinHeight: 440,
+		StateKey: "settings-v3", Content: ui.View(a.settingsView),
 		TitleBarStyle: mygo.TitleBarHiddenInset, DisableMaximize: true, DisableFullScreen: true,
 	})
 	a.setWin.OnClosed(func() {
+		delete(a.btnTheme, a.setWin)
 		a.setWin, a.showSettings = nil, false
 		a.win.Invalidate()
 	})
@@ -198,24 +200,33 @@ func (a *app) closeSettings() {
 
 // setColors are the settings window's neutrals: greys drawn from the style's own text and
 // backdrop, so every style gets a calm window and only the icons and controls carry its accent.
-type setColors struct{ side, page, line, sel, hov, track, raised ui.Color }
+// setColors are the settings window's papers: the sidebar, the page, and the cards that group
+// a page's rows on it.
+type setColors struct{ side, page, card, line, sel, hov, track, raised ui.Color }
 
 func (a *app) setColors() setColors {
 	p := a.pal
 	k := setColors{
-		side: p.bg.Mix(p.text, .045), page: p.bg.Mix(p.text, .015),
-		line: p.text.Alpha(.09), sel: p.text.Alpha(.11), hov: p.text.Alpha(.05),
-		track: p.text.Alpha(.06), raised: p.text.Alpha(.14),
+		side: p.bg.Mix(p.text, .035), page: p.bg.Mix(p.text, .012), card: p.bg.Mix(p.text, .045),
+		line: p.text.Alpha(.08), sel: p.text.Alpha(.1), hov: p.text.Alpha(.05),
+		track: p.text.Alpha(.07), raised: p.text.Alpha(.14),
 	}
 	if !p.dark {
-		k.side, k.page = p.bg.Mix(p.text, .05), p.bg.Mix(ui.RGB(255, 255, 255), .55)
-		k.sel, k.raised = p.text.Alpha(.08), ui.RGB(255, 255, 255)
+		k.side, k.page, k.card = p.bg.Mix(p.text, .04), p.bg.Mix(p.text, .02), ui.RGB(255, 255, 255).Mix(p.bg, .25)
+		k.sel, k.track, k.raised = p.text.Alpha(.07), p.text.Alpha(.06), ui.RGB(255, 255, 255)
 	}
 	if p.rule > 0 { // the same papers and rule as the main window, not greys mixed into the hue
-		k.side, k.page, k.line = p.panel, p.bg, p.ink.Alpha(p.rule)
+		k.side, k.page, k.card, k.line = p.panel, p.bg, p.panel, p.ink.Alpha(p.rule)
 	}
 	return k
 }
+
+// Settings metrics: the sidebar's width and the page's margins.
+const (
+	setNavW  = 184
+	setPadX  = 26
+	setCardR = 10 // a card's corner, at most (square styles keep theirs)
+)
 
 // settingsView is the settings window: the categories on the left, the chosen one's page on the
 // right. A page is a title over hairline-separated rows: what an option does on the left, its
@@ -240,12 +251,12 @@ func (a *app) settingsView(c *ui.Context) {
 		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).MinHeight(0).Children(func() {
 			tab := settingsTabs[a.setTab]
 			ui.Scroll(c.Key("body-" + tab.key)).Grow(1).MinHeight(0).Children(func() {
-				ui.Column(c.Key(tab.key)).Padding(max(28, c.TitleBar().Bottom), 30, 30, 30).Children(func() {
-					ui.Column(c).Gap(5).DragWindow().Children(func() {
-						ui.Text(c, tabLabel(tab.key, tab.label)).FontSize(22).Bold()
-						ui.Text(c, T(tab.hint)).FontSize(13).TextColor(pal.t3)
+				ui.Column(c.Key(tab.key)).Padding(setTop(c), setPadX, 16, setPadX).MaxWidth(720).Children(func() {
+					// the title lines up with the first category in the sidebar
+					ui.Column(c).Gap(3).Padding(0, 0, 8, 2).DragWindow().Children(func() {
+						ui.Text(c, tabLabel(tab.key, tab.label)).FontSize(19).Bold()
+						ui.Text(c, T(tab.hint)).FontSize(12.5).TextColor(pal.t3)
 					})
-					ui.Box(c).Height(1).Margin(16, 0, 0, 0).Background(k.line)
 					a.groupN = 0
 					switch tab.key {
 					case "look":
@@ -271,18 +282,22 @@ func (a *app) settingsView(c *ui.Context) {
 // the version at the foot.
 func (a *app) settingsNav(c *ui.Context, k setColors) {
 	pal := a.pal
-	top := max(20, c.TitleBar().Bottom+14)
-	ui.Column(c.Key("nav")).Width(212).Shrink(0).Padding(top, 12, 16, 12).Gap(4).Background(k.side).DragWindow().Children(func() {
+	ui.Column(c.Key("nav")).Width(setNavW).Shrink(0).Padding(setTop(c)-4, 10, 14, 10).Gap(2).Background(k.side).DragWindow().Children(func() {
 		for i, t := range settingsTabs {
 			sel := i == a.setTab
 			fg := pal.t2
 			if sel {
 				fg = pal.text
 			}
-			r := ui.Row(c.Key(t.key)).Height(38).Padding(0, 12).Gap(12).Radius(max(pal.radius, 4) + 3).AlignItems(ui.Center).
+			r := ui.Row(c.Key(t.key)).Height(34).Padding(0, 10).Gap(10).Radius(min(max(pal.radius, 4)+2, 8)).AlignItems(ui.Center).
 				Cursor(ui.CursorPointer).Children(func() {
-				icon(c, t.icon, 18, pal.accent, 1.7)
-				ui.Text(c, tabLabel(t.key, t.label)).FontSize(14.5).FontWeight(500).TextColor(fg).SingleLine().Ellipsis("…")
+				icon(c, t.icon, 16, pal.accent, 1.7)
+				tx := ui.Text(c, tabLabel(t.key, t.label)).FontSize(13.5).TextColor(fg).SingleLine().Ellipsis("…")
+				if sel {
+					tx.FontWeight(600)
+				} else {
+					tx.FontWeight(500)
+				}
 			})
 			if sel {
 				r.Background(k.sel)
@@ -294,46 +309,65 @@ func (a *app) settingsNav(c *ui.Context, k setColors) {
 			}
 		}
 		ui.Box(c).Grow(1)
-		ui.Row(c).Padding(0, 12).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Box(c).Size(7, 7).Radius(3.5).Background(pal.level[0])
-			ui.Text(c, "Tossy "+appVersion()).FontSize(12).TextColor(pal.t3).SingleLine()
+		ui.Row(c).Padding(0, 10).Gap(7).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Size(6, 6).Radius(3).Background(pal.level[0])
+			ui.Text(c, "Tossy "+appVersion()).FontSize(11.5).TextColor(pal.t3).SingleLine()
 		})
 	})
 }
 
-// groupTitle is a small caption over a run of rows.
-func (a *app) groupTitle(c *ui.Context, title string) {
-	ui.Row(c).Padding(22, 0, 4, 0).Children(func() {
-		ui.Text(c, T(title)).FontSize(12).FontWeight(600).TextColor(a.pal.t3)
-	})
-	a.groupN = 0
+// setTop is where the sidebar's first category and the page's title start: below the window
+// controls where they share the top edge (the traffic lights on macOS), else a small margin.
+func setTop(c *ui.Context) float32 {
+	bar := c.TitleBar()
+	if bar.Left > 0 {
+		return max(22, bar.Bottom+10)
+	}
+	return max(22, bar.Bottom-6)
 }
 
-// group is a run of related rows under an optional caption.
+// groupTitle is a small caption over a card.
+func (a *app) groupTitle(c *ui.Context, title string) {
+	ui.Row(c).Padding(14, 0, 6, 4).Children(func() {
+		ui.Text(c, T(title)).FontSize(12).FontWeight(600).TextColor(a.pal.t3)
+	})
+}
+
+// group is a card of related rows, under an optional caption. Every row of a page sits in one.
 func (a *app) group(c *ui.Context, key, title string, fn func()) {
+	pal, k := a.pal, a.setColors()
 	ui.Column(c.Key(key)).Children(func() {
 		if title != "" {
 			a.groupTitle(c, title)
+		} else {
+			ui.Box(c).Height(8)
 		}
-		fn()
+		a.groupN = 0
+		card := ui.Column(c.Key("card")).Background(k.card).Clip()
+		if pal.radius == 0 {
+			card.Border(1, k.line)
+		} else {
+			card.Radius(min(pal.radius+4, setCardR)).Border(1, k.line.Alpha(.6))
+		}
+		card.Children(fn)
 	})
 }
 
-// cell is one row of a page: it draws the hairline above every row but the first of a run.
+// cell is one row of a card: it draws the hairline above every row but the first.
 func (a *app) cell(c *ui.Context, key string, fn func()) {
 	if a.groupN > 0 {
-		ui.Box(c).Height(1).Background(a.setColors().line)
+		ui.Box(c).Height(1).Margin(0, 0, 0, 16).Background(a.setColors().line)
 	}
 	a.groupN++
-	ui.Column(c.Key(key)).Padding(16, 0).Gap(10).Children(fn)
+	ui.Column(c.Key(key)).Padding(11, 16).Gap(8).Children(fn)
 }
 
 // rowLabel is an option's name over what it does.
 func (a *app) rowLabel(c *ui.Context, label, hint string) {
-	ui.Column(c).Gap(4).Grow(1).Shrink(1).MinWidth(0).Children(func() {
-		ui.Text(c, label).FontSize(14.5).FontWeight(600)
+	ui.Column(c).Gap(3).Grow(1).Shrink(1).MinWidth(0).Children(func() {
+		ui.Text(c, label).FontSize(13.5).FontWeight(600)
 		if hint != "" {
-			ui.Text(c, hint).FontSize(12.5).TextColor(a.pal.t3)
+			ui.Text(c, hint).FontSize(12).LineHeight(1.4).TextColor(a.pal.t3)
 		}
 	})
 }
@@ -341,7 +375,7 @@ func (a *app) rowLabel(c *ui.Context, label, hint string) {
 // option is one labelled control: label and hint on the left, the control on the right.
 func (a *app) option(c *ui.Context, key, label, hint string, control func()) {
 	a.cell(c, key, func() {
-		ui.Row(c).Gap(24).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Gap(20).AlignItems(ui.Center).Children(func() {
 			a.rowLabel(c, label, hint)
 			ui.Row(c).Shrink(0).Gap(6).AlignItems(ui.Center).Children(control)
 		})
@@ -398,40 +432,49 @@ func (a *app) setAppearance(c *ui.Context) {
 	for _, l := range languages {
 		langs = append(langs, segment{l.code, l.name}) // each in its own language
 	}
-	a.option(c, "lang", T("语言"), T("界面使用的语言"), func() {
-		if k, ok := a.segments(c, "pick", langs, a.set.Lang); ok {
-			a.set.Lang = k
-		}
-	})
-	a.cell(c, "style", func() {
-		a.rowLabel(c, T("风格"), T("整个界面的配色、扇区画法、字体与圆角"))
-		a.styleCards(c)
-		cur := palettes[a.palIdx]
-		ui.Row(c).Gap(8).AlignItems(ui.Baseline).Children(func() {
-			ui.Text(c, T(cur.label)).FontSize(13).FontWeight(600).SingleLine()
-			ui.Text(c, T(cur.desc)).FontSize(12.5).TextColor(a.pal.t3).Shrink(1).MinWidth(0)
+	// the five choices are wider than the room beside the label at the window's narrowest:
+	// they sit below it, as the style cards do
+	a.group(c, "g-lang", "", func() {
+		a.cell(c, "lang", func() {
+			a.rowLabel(c, T("语言"), T("界面使用的语言"))
+			ui.Row(c).Children(func() {
+				if k, ok := a.segments(c, "pick", langs, a.set.Lang); ok {
+					a.set.Lang = k
+				}
+			})
 		})
 	})
-	a.option(c, "rm", T("减少动态效果"), T("关闭缩放过渡、开场动画与飞入废纸篓动画（墨水屏只保留废纸篓动画）"), func() {
-		ui.Switch(c.Key("sw"), &a.set.ReduceMotion)
+	a.group(c, "g-style", "", func() {
+		a.cell(c, "style", func() {
+			a.rowLabel(c, T("风格"), T("整个界面的配色、扇区画法、字体与圆角"))
+			a.styleCards(c)
+			cur := palettes[a.palIdx]
+			ui.Row(c).Gap(8).AlignItems(ui.Baseline).Children(func() {
+				ui.Text(c, T(cur.label)).FontSize(13).FontWeight(600).SingleLine().Shrink(0)
+				ui.Text(c, T(cur.desc)).FontSize(12).TextColor(a.pal.t3).Shrink(1).MinWidth(0)
+			})
+		})
+		a.option(c, "rm", T("减少动态效果"), Tf("关闭缩放过渡、开场动画与飞入%[1]s动画（墨水屏只保留分步刷新的%[1]s动画）", trashName()), func() {
+			ui.Switch(c.Key("sw"), &a.set.ReduceMotion)
+		})
 	})
 }
 
-// styleCards is the grid of styles, four to a row: a miniature of each in its own manner (its
+// styleCards is the grid of styles, five to a row: a miniature of each in its own manner (its
 // paper, its sectors, a hint of its instruments), its name under it, the chosen one ringed in
 // the accent.
 func (a *app) styleCards(c *ui.Context) {
 	pal, k := a.pal, a.setColors()
-	ui.Grid(c.Key("styles")).Columns(4).Gap(12).Padding(6, 0, 2, 0).Children(func() {
+	ui.Grid(c.Key("styles")).Columns(5).Gap(8).Padding(2, 0, 0, 0).Children(func() {
 		for i, sp := range palettes {
 			sel := i == a.palIdx
 			rad := min(sp.radius, 8)
-			card := ui.Column(c.Key(sp.name)).Gap(7).Padding(4, 4, 8, 4).Radius(rad+4).AlignItems(ui.Center).
+			card := ui.Column(c.Key(sp.name)).Gap(5).Padding(3, 3, 6, 3).Radius(rad+4).AlignItems(ui.Center).
 				Cursor(ui.CursorPointer).Border(2, ui.Transparent).Children(func() {
-				ui.Box(c).Fill().Height(78).Radius(rad).Background(sp.bg).Border(1, k.line).Clip().
+				ui.Box(c).Fill().Height(50).Radius(rad).Background(sp.bg).Border(1, k.line).Clip().
 					Draw(func(p *ui.Painter, r ui.Rect) { paintSwatch(p, r, sp) })
 				ui.Row(c).Gap(6).AlignItems(ui.Baseline).Children(func() {
-					t := ui.Text(c, T(sp.label)).FontSize(13.5).SingleLine()
+					t := ui.Text(c, T(sp.label)).FontSize(12.5).SingleLine().Ellipsis("…")
 					if sel {
 						t.FontWeight(700)
 					} else {
@@ -617,48 +660,60 @@ func swatchArc(p *ui.Painter, path *ui.Path, sp *palette, h, s, l float32, leaf,
 }
 
 func (a *app) setScan(c *ui.Context) {
+	k := a.setColors()
 	root := a.set.Root
 	if root == "" {
 		root = T("主目录（默认）")
 	}
-	a.option(c, "root", T("启动时扫描"), root, func() {
-		if a.set.Root != "" && a.btn(c.Key("reset"), T("恢复默认"), btnPlain, false, nil).Clicked() {
-			a.set.Root = ""
-		}
-		if a.btn(c.Key("pick"), T("选择…"), btnSolid, false, nil).Clicked() {
-			a.pickFolder(T("选择默认扫描位置"), func(p string) { a.set.Root = p })
+	a.group(c, "g-where", "", func() {
+		a.option(c, "root", T("启动时扫描"), root, func() {
+			if a.set.Root != "" && a.btn(c.Key("reset"), T("恢复默认"), btnPlain, false, nil).Clicked() {
+				a.set.Root = ""
+			}
+			if a.btn(c.Key("pick"), T("选择…"), btnSolid, false, nil).Clicked() {
+				a.pickFolder(T("选择默认扫描位置"), func(p string) { a.set.Root = p })
+			}
+		})
+		if runtime.GOOS != "windows" { // on Windows a mounted volume is a reparse point, never entered
+			a.option(c, "xdev", T("跨越其他磁盘"), T("扫描挂载在目录内的其他卷（默认只扫描同一磁盘，和 du -x 一致）"), func() {
+				ui.Switch(c.Key("sw"), &a.set.CrossDevice)
+			})
 		}
 	})
-	a.option(c, "xdev", T("跨越其他磁盘"), T("扫描挂载在目录内的其他卷（默认只扫描同一磁盘，和 du -x 一致）"), func() {
-		ui.Switch(c.Key("sw"), &a.set.CrossDevice)
-	})
-	a.cell(c, "ex", func() {
-		a.rowLabel(c, T("排除的位置"), T("每行一个路径，可用 ~ 表示主目录；排除的目录只记录、不进入。下次扫描生效。"))
-		ui.TextArea(c.Key("ta"), &a.set.Exclude).Height(140).Font("monospace").FontSize(12)
+	a.group(c, "g-ex", "", func() {
+		a.cell(c, "ex", func() {
+			a.rowLabel(c, T("排除的位置"), T("每行一个路径，可用 ~ 表示主目录；排除的目录只记录、不进入。下次扫描生效。"))
+			ui.TextArea(c.Key("ta"), &a.set.Exclude).Placeholder(excludeExample()).Height(104).Font("monospace").FontSize(12).
+				Background(k.page).Border(1, k.line).Radius(min(a.pal.radius+2, 6))
+		})
 	})
 }
 
 func (a *app) setClean(c *ui.Context) {
-	a.option(c, "review", T("清理前先复核方案"), T("分析结束后在右侧列出每一项，可逐项取消；关闭则分析后直接清理"), func() {
-		ui.Switch(c.Key("sw"), &a.set.Review)
-	})
-	a.option(c, "anal", T("显示分析扫描"), T("清理前的扫描动画，同时检查文件占用"), func() {
-		ui.Switch(c.Key("sw"), &a.set.Analysis)
+	a.group(c, "g-flow", "", func() {
+		a.option(c, "review", T("清理前先复核方案"), T("分析结束后在右侧列出每一项，可逐项取消；关闭则分析后直接清理"), func() {
+			ui.Switch(c.Key("sw"), &a.set.Review)
+		})
+		a.option(c, "anal", T("显示分析扫描"), T("清理前的扫描动画，同时检查文件占用"), func() {
+			ui.Switch(c.Key("sw"), &a.set.Analysis)
+		})
 	})
 	a.group(c, "inuse", "占用保护", func() {
-		a.option(c, "apps", T("跳过正在运行的应用的缓存"), T("如浏览器、Slack、VS Code、Xcode 正在运行，跳过它们的缓存"), func() {
+		a.option(c, "apps", T("跳过正在运行的应用的缓存"), runningAppsHint(), func() {
 			ui.Switch(c.Key("sw"), &a.set.SkipApps)
 		})
 		a.option(c, "recent", T("跳过最近写入的项目"), Tf("%d 分钟内有写入的缓存视为正在使用", int(a.set.InUseMin)), func() {
-			ui.Slider(c.Key("sl"), &a.set.InUseMin, 0, 120).Width(180)
+			ui.Slider(c.Key("sl"), &a.set.InUseMin, 0, 120).Width(150)
 		})
 	})
 }
 
 func (a *app) setHabits(c *ui.Context) {
 	pal := a.pal
-	a.option(c, "on", T("从手动删除中学习"), T("同类项目手动删除多次后，自动清理会一并包含；从废纸篓恢复会让习惯减弱"), func() {
-		ui.Switch(c.Key("sw"), &a.set.Habits)
+	a.group(c, "g-learn", "", func() {
+		a.option(c, "on", T("从手动删除中学习"), Tf("同类项目手动删除多次后，自动清理会一并包含；从%s恢复会让习惯减弱", trashName()), func() {
+			ui.Switch(c.Key("sw"), &a.set.Habits)
+		})
 	})
 	if a.habit == nil {
 		return
@@ -697,17 +752,38 @@ func (a *app) setHabits(c *ui.Context) {
 }
 
 func (a *app) setTrash(c *ui.Context) {
-	a.option(c, "how", T("工作方式"), T("放入废纸篓只是 Tossy 里的标记：文件原地不动，也不会进系统废纸篓。恢复即取消标记；清空时才在原位置永久删除被标记的项目。"), func() {})
-	a.cell(c, "dir", func() {
-		ui.Row(c).Gap(24).AlignItems(ui.Center).Children(func() {
-			ui.Column(c).Gap(4).Grow(1).Shrink(1).MinWidth(0).Children(func() {
-				ui.Text(c, T("记录位置")).FontSize(14.5).FontWeight(600)
-				ui.Text(c, stateDir()).FontSize(12).Font("monospace").TextColor(a.pal.t3).SingleLine().TruncateMiddle()
+	a.group(c, "g-trash", "", func() {
+		a.option(c, "how", T("工作方式"), Tf("放入%[1]s只是 Tossy 里的标记：文件原地不动，也不会进系统%[1]s。恢复即取消标记；清空时才在原位置永久删除被标记的项目。", trashName()), func() {})
+		a.cell(c, "dir", func() {
+			ui.Row(c).Gap(20).AlignItems(ui.Center).Children(func() {
+				ui.Column(c).Gap(3).Grow(1).Shrink(1).MinWidth(0).Children(func() {
+					ui.Text(c, T("记录位置")).FontSize(13.5).FontWeight(600)
+					ui.Text(c, stateDir()).FontSize(11.5).Font("monospace").TextColor(a.pal.t3).SingleLine().TruncateMiddle()
+				})
+				if a.btn(c.Key("reveal"), revealLabel(), btnSolid, false, nil).Clicked() {
+					os.MkdirAll(stateDir(), 0o755)
+					mygo.Shell.OpenPath(stateDir())
+				}
 			})
-			if a.btn(c.Key("reveal"), revealLabel(), btnSolid, false, nil).Clicked() {
-				os.MkdirAll(stateDir(), 0o755)
-				mygo.Shell.OpenPath(stateDir())
-			}
 		})
 	})
+}
+
+// runningAppsHint names apps whose caches in-use protection knows on this platform.
+func runningAppsHint() string {
+	if runtime.GOOS == "darwin" {
+		return T("如浏览器、Slack、VS Code、Xcode 正在运行，跳过它们的缓存")
+	}
+	return T("如浏览器、Slack、VS Code、Discord 正在运行，跳过它们的缓存")
+}
+
+// excludeExample fills the empty exclusion list with paths as this platform writes them.
+func excludeExample() string {
+	switch runtime.GOOS {
+	case "windows":
+		return `~\AppData\Local\Packages` + "\n" + `D:\VMs`
+	case "darwin":
+		return "~/Library/Containers\n/Volumes/Backup"
+	}
+	return "~/.local/share/Steam\n/mnt/data"
 }

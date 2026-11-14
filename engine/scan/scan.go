@@ -80,7 +80,8 @@ type scanner struct {
 	links map[[2]uint64]struct{}
 
 	devs     map[uint64]bool
-	excluded map[string]bool
+	excluded map[string]bool // by foldPath
+	exLens   map[int]bool    // lengths of the excluded paths: most folders skip the lookup
 	files    atomic.Int64
 	dirs     atomic.Int64
 	errs     atomic.Int64
@@ -110,6 +111,7 @@ func Scan(ctx context.Context, root string, opt Options) (*Tree, error) {
 		links:    map[[2]uint64]struct{}{},
 		devs:     map[uint64]bool{},
 		excluded: map[string]bool{},
+		exLens:   map[int]bool{},
 	}
 	s.qcond = sync.NewCond(&s.qmu)
 	for _, d := range rootDevices(abs) {
@@ -117,7 +119,8 @@ func Scan(ctx context.Context, root string, opt Options) (*Tree, error) {
 	}
 	for _, e := range append(defaultExcludes(abs), opt.Exclude...) {
 		if e = filepath.Clean(e); e != filepath.Clean(abs) {
-			s.excluded[e] = true
+			k := foldPath(e)
+			s.excluded[k], s.exLens[len(k)] = true, true
 		}
 	}
 	// root node
@@ -273,7 +276,7 @@ func (s *scanner) visit(j job, ents *[]rawEntry, sub []job) []job {
 			full := base + e.name
 			if e.cloud {
 				// dataless folder: listing it would trigger a download
-			} else if (!s.opt.CrossDevice && !s.devs[e.dev]) || s.excluded[full] || (s.opt.Skip != nil && s.opt.Skip(j.path, e.name)) {
+			} else if (!s.opt.CrossDevice && !s.devs[e.dev]) || s.isExcluded(full) || (s.opt.Skip != nil && s.opt.Skip(j.path, e.name)) {
 				n.Flags |= FlagMount
 			} else {
 				sub = append(sub, job{idx, full})
@@ -298,3 +301,8 @@ func (s *scanner) visit(j job, ents *[]rawEntry, sub []job) []job {
 }
 
 var debugSlow = os.Getenv("TOSSY_DEBUG") != ""
+
+// isExcluded reports whether the folder at full was excluded.
+func (s *scanner) isExcluded(full string) bool {
+	return s.exLens[len(full)] && s.excluded[foldPath(full)]
+}

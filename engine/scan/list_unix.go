@@ -55,3 +55,6 @@ func rootDevices(root string) []uint64 {
 	}
 	return out
 }
+
+// foldPath is the identity: Unix file names are case-sensitive.
+func foldPath(p string) string { return p }

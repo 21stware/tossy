@@ -54,6 +54,26 @@ func (a *app) applyTheme(c *ui.Context) {
 	}
 	a.syncDockIcon(a.pal)
 	c.SetTheme(a.uiTheme) // per frame
+	a.syncWindowButtons()
+}
+
+// syncWindowButtons draws the window controls for the style, not the system: on Windows and
+// Linux they sit on the page, and a light style under a dark system (or the reverse) would get
+// glyphs that vanish into the background.
+func (a *app) syncWindowButtons() {
+	want := mygo.ThemeLight
+	if a.pal.dark {
+		want = mygo.ThemeDark
+	}
+	if a.btnTheme == nil {
+		a.btnTheme = map[*mygo.Window]mygo.ThemeSource{}
+	}
+	for _, w := range []*mygo.Window{a.win, a.setWin} {
+		if w != nil && a.btnTheme[w] != want {
+			a.btnTheme[w] = want
+			w.SetWindowButtonsTheme(want)
+		}
+	}
 }
 
 func (a *app) view(c *ui.Context) {

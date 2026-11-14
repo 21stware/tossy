@@ -116,7 +116,7 @@ The switch beside the Auto Clean button (or ⌘D) turns the same scan into a dev
 - **Ten styles:** HUD, Mech, Classic, Blueprint, Terminal, Industrial, E-ink, Happy, Pinky and Greeny. Each has its own way of painting sectors, its own instrument layer and its own effects, such as the terminal's CRT power-on with a typed command line, and the blueprint's linework drawn before its washes.
 - **The Dock icon follows the style.** While Tossy runs, its Dock icon is the bin drawn the way the current style draws it, on that style's ground.
 - **Reduce motion** option.
-- **Languages:** English, Simplified Chinese, Traditional Chinese and Japanese. Follows the system language by default.
+- **Languages:** English, Simplified Chinese, Traditional Chinese and Japanese. Follows the system language by default. On Linux, Chinese and Japanese need a CJK font such as Noto Sans CJK (`fonts-noto-cjk` on Debian and Ubuntu).
 
 ![All ten styles](docs/screenshots/styles.png)
 

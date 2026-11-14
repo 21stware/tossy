@@ -155,3 +155,23 @@ func TestRemoveReattachKeepsOrder(t *testing.T) {
 		t.Fatalf("after reattach %s", names())
 	}
 }
+
+// An excluded folder is listed but not entered; on Windows the path matches in any case.
+func TestExclude(t *testing.T) {
+	root := fixture(t)
+	ex := filepath.Join(root, "big")
+	if runtime.GOOS == "windows" {
+		ex = filepath.Join(root, "BIG")
+	}
+	tr, err := Scan(context.Background(), root, Options{Exclude: []string{ex}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := tr.Find(filepath.Join(root, "big"))
+	if big < 0 || tr.Nodes[big].First != None || tr.Nodes[big].Flags&FlagMount == 0 {
+		t.Fatalf("big was entered: %+v", tr.Nodes[big])
+	}
+	if small := tr.Find(filepath.Join(root, "small")); small < 0 || tr.Nodes[small].First == None {
+		t.Fatal("small was not entered")
+	}
+}

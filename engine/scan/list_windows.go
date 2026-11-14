@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // FindFirstFile/FindNextFile already return size and times, so DirEntry.Info costs no extra syscall.
@@ -47,3 +48,6 @@ func defaultExcludes(root string) []string {
 }
 
 func defaultWorkers() int { return min(max(runtime.NumCPU()*2, 4), 32) }
+
+// foldPath makes exclusions match as the file system does: without regard to case.
+func foldPath(p string) string { return strings.ToLower(p) }
