@@ -72,6 +72,7 @@ func (a *app) view(c *ui.Context) {
 		a.openSettings()
 	}
 	a.keys(c)
+	a.stepHero()
 	a.hover, a.hoverAgg, a.centerHot = scan.None, nil, false
 
 	pal := a.pal
@@ -268,7 +269,9 @@ func (a *app) ltop(c *ui.Context) {
 			ui.Row(c.Key("tvt")).Absolute().Left(18+bar.Left).MaxWidth(navMax).Top(top).Height(30).Gap(10).AlignItems(ui.Center).
 				Translate(0, -(30+top)*(1-tv)).PassThrough().Children(func() {
 				ui.Text(c, Tf("%s里的内容来自哪里", trashName())).FontSize(13).FontWeight(600).SingleLine().Shrink(0)
-				ui.Text(c, a.trashSummary()).FontSize(12).TextColor(pal.t3).SingleLine().TruncateMiddle().Shrink(1)
+				if s := a.trashSummary(); s != "" { // empty: the header under the chart says so
+					ui.Text(c, s).FontSize(12).TextColor(pal.t3).SingleLine().TruncateMiddle().Shrink(1)
+				}
 			})
 		}
 		ui.Spacer(c)

@@ -110,7 +110,8 @@ type binState struct {
 
 	// the hero bin of the trash scene: the dock bin grows to the column's bottom centre
 	heroSp         spring
-	heroK, heroS   float32
+	heroX          float32 // the spring as stepped at the start of the frame (see stepHero)
+	heroK, heroS   float32 // heroK: heroX up to 1
 	tsaH           float32 // the trash panel's action row, under the hero's stage
 	heroW          float32 // the hero's floor, wide enough for its tips
 	heroTX, heroTY float32 // target bottom centre in the window
@@ -127,6 +128,33 @@ type binState struct {
 	bigF       float32 // and its font size
 	szDX, szDY float32 // the dock's size text at rest, from the window's bottom-right corner
 	szSet      bool
+	flying     bool // this frame the size is the flying copy: the dock's and the header's hide
+	// the trash chart's centre says the same: it is hidden while the size flies, and fades
+	// back in once it has landed
+	centerSp spring
+	centerA  float32
+}
+
+// stepHero moves the hero spring once per frame, before anything is built: the trash
+// header is built before the dock, and both must see the same progress, or on landing
+// neither copy of the size shows for a frame (and on the way back both do).
+func (a *app) stepHero() {
+	f := &a.binS
+	if !a.shown || a.chartR.W == 0 { // no dock this frame (see the app's frame)
+		f.flying = false
+		return
+	}
+	hk := 0.0
+	if a.sceneOn() == sceneTrash {
+		hk = 1
+	}
+	k := max(0, float32(a.springTo(&f.heroSp, hk)))
+	f.heroX, f.heroK = k, min(k, 1)
+	f.flying = k > 0 && k < 1 && f.szSet && a.motion()
+	if f.flying { // gone at once: no second copy while the size moves
+		f.centerSp.snap(0)
+	}
+	f.centerA = max(0, min(1, float32(a.springTo(&f.centerSp, 1))))
 }
 
 // dockS is the bin's scale at rest in the dock: the tiers are drawn at 1 and zoomed by it.

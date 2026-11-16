@@ -17,7 +17,7 @@ import (
 // this frame's layout and never change state.
 
 func (a *app) monoText(p *ui.Painter, x, y float32, s string, size float32, c ui.Color) {
-	p.RichText(x, y, 0, ui.Span{Text: s, Size: size, Font: "monospace", Color: c})
+	spanAt(p, x, y, ui.Span{Text: s, Size: size, Font: "monospace", Color: c})
 }
 
 func polar(cx, cy, r float32, ang float64) (float32, float32) {

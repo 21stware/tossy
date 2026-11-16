@@ -137,7 +137,7 @@ func (a *app) paintCallout(p *ui.Painter, r ui.Rect) {
 			p.FillPath((&ui.Path{}).Circle(x+3, top+7, 3), l.dot)
 			x += 10
 		}
-		p.RichText(x, top, 0, l.sp)
+		spanAt(p, x, top, l.sp)
 	}
 }
 
