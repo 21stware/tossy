@@ -1,10 +1,39 @@
-# Tossy
+<p align="center">
+  <img src="app/resources/icon.png" width="128" height="128" alt="Tossy">
+</p>
+
+<h1 align="center">Tossy</h1>
+
+<p align="center">
+  See what fills your disk, and clean only what is safe to clean.<br>
+  <a href="https://github.com/21stware/tossy/releases/latest">Download for macOS and Linux</a>
+</p>
 
 Tossy is a disk cleanup analyser. It shows what fills your disk as a sunburst you can drill into, gives everything a safety verdict, and cleans only what is safe to clean in one click. Anything it removes can be put back until you empty its trash.
 
 It ships as a native desktop app (built with [MyGo](https://github.com/egoist/mygo)) and a command-line tool, both on the same Go engine. It runs on macOS, Linux and Windows.
 
 ![Tossy: the disk as a sunburst, with the folder list and the trash bin](docs/screenshots/overview.png)
+
+## Download
+
+Get the latest build from [Releases](https://github.com/21stware/tossy/releases/latest).
+
+**macOS** (12 or later, Apple silicon and Intel): open `tossy-<version>.dmg` and drag Tossy into Applications. The app is not notarized yet, so macOS blocks its first launch. Allow it in System Settings → Privacy & Security → Open Anyway, or clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Tossy.app
+```
+
+**Linux** (x86-64 and ARM64; needs GTK 3):
+
+| Distribution | File | Install |
+| --- | --- | --- |
+| Debian, Ubuntu | `tossy_<version>_amd64.deb` | `sudo apt install ./tossy_<version>_amd64.deb` |
+| Fedora, RHEL | `tossy-<version>-1.x86_64.rpm` | `sudo dnf install ./tossy-<version>-1.x86_64.rpm` |
+| Any (Arch too), per user | `tossy-<version>-linux-amd64.tar.gz` | `sh install.sh tossy-<version>-linux-amd64.tar.gz` |
+
+ARM64 files carry `arm64` / `aarch64` in place of `amd64` / `x86_64`. The command-line tool is attached as `tossy-cli-<version>-<os>-<arch>.tar.gz`. `SHA256SUMS` lists the checksums of every file.
 
 ## Features
 
@@ -52,19 +81,22 @@ Generic names such as `dist`, `build`, `target` or `vendor` only match inside a 
 ### The trash
 
 - **A mark, not a move.** Putting something in Tossy's trash only records a mark in a journal. The file stays where it is, and the system trash is never touched. Restoring drops the mark; emptying deletes exactly the marked paths, in place, for good.
-- **Trash view.** The bin grows with what is in it, from a desk basket to a skip. Items lie in it as balls coloured by safety level. Next to it, a chart rebuilds where the contents came from, and hovering a ball, a row or a sector lights up the other two. Items are grouped by why they were removed (Auto Clean, a habit, or by hand), with a safety breakdown.
-- **Restore and empty.** Restore items one at a time or all at once. Before emptying, the bin asks in a speech bubble; then the balls vanish one by one and the freed space shows on the disk line.
+- **Trash view.** The bin grows with what is in it, from a desk basket through the app icon's bin, a pedal bin and a wheelie bin to a skip and a roll-off container, made the way the style draws its chart: cyan glass on the HUD, a cobalt plate on the mech, white or phosphor linework on the blueprint and the terminal, off-white hardware with an orange rim on the industrial style, candy plastic on the cartoon styles. Items lie in it as balls coloured by safety level, seen through its body. Next to it, a chart rebuilds where the contents came from, and hovering a ball, a row or a sector lights up the other two. Items are grouped by why they were removed (Auto Clean, a habit, or by hand), with a safety breakdown.
+- **Restore and empty.** Restore items one at a time or all at once. Before emptying, the bin asks in a speech bubble. Then a vehicle comes for it, the bigger the bin the bolder the ride: a matte-black van picks a small bin's items out with a robotic arm, an electric hauler takes a mid-sized bin's in at the back as its light bar fills, and a hover craft draws a big bin's up its tractor beam. Each item leaves only once it has really been deleted, so the motion is the progress bar, with a HUD readout counting what has gone; the freed space then shows on the disk line. With reduced motion, or on e-ink, the balls vanish one by one instead.
 - Items that older versions really moved into the system trash (macOS Trash, freedesktop.org Trash, Windows Recycle Bin) can still be restored or purged.
 
 ![The trash: where its contents came from, and the bin](docs/screenshots/trash.png)
 
 ### Styles and languages
 
-- **Ten styles:** HUD, Mech, Classic, Blueprint, Terminal, Industrial, E-ink, Happy, Pinky and Greeny. Each has its own way of painting sectors, its own instrument layer and its own effects, such as the e-ink refresh flash, the terminal's CRT power-on with a typed command line, and the blueprint's linework drawn before its washes.
+- **Ten styles:** HUD, Mech, Classic, Blueprint, Terminal, Industrial, E-ink, Happy, Pinky and Greeny. Each has its own way of painting sectors, its own instrument layer and its own effects, such as the terminal's CRT power-on with a typed command line, and the blueprint's linework drawn before its washes.
+- **The Dock icon follows the style.** While Tossy runs, its Dock icon is the bin drawn the way the current style draws it, on that style's ground.
 - **Reduce motion** option.
 - **Languages:** English, Simplified Chinese, Traditional Chinese and Japanese. Follows the system language by default.
 
 ![All ten styles](docs/screenshots/styles.png)
+
+![The Dock icon in each style](docs/dock-icons.png)
 
 ### Settings
 
@@ -116,13 +148,37 @@ go run github.com/egoist/mygo/cmd/mygo build ./app
 go test ./...
 ```
 
-`mygo dev` runs a development build with live reload. `mygo build` builds the release app (a `.app` and a `.dmg` on macOS) into `app/build/`; see [app/mygo.json](app/mygo.json).
+`mygo dev` runs a development build with live reload. `mygo build` builds the release app into `app/build/<os>-<arch>/`; see [app/mygo.json](app/mygo.json). MyGo needs no cgo, so any machine builds for both platforms, though only macOS makes the `.dmg`:
 
-The screenshots in this README are rendered headlessly by a test, in English, from a synthetic home folder:
+```bash
+cd app && go run github.com/egoist/mygo/cmd/mygo build -platform darwin/universal,linux/amd64,linux/arm64 .
+```
+
+On macOS that gives a universal `Tossy.app` and `tossy-<version>.dmg`; for Linux, the executable, a desktop entry, a `.deb`, an `.rpm`, a `.tar.gz` with `install.sh`, and a `PKGBUILD` for Arch.
+
+The screenshots and the Dock icon strip in this README are rendered headlessly by tests, in English, from a synthetic home folder:
 
 ```bash
 cd app && TOSSY_README_SHOTS=$PWD/../docs/screenshots go test -run TestReadmeShots .
 ```
+
+```bash
+cd app && TOSSY_ICONS=$PWD/../docs go test -run TestDockIcons .
+```
+
+## Releasing
+
+[.github/workflows/release.yml](.github/workflows/release.yml) builds the macOS app on a macOS runner and the Linux packages (x86-64 and ARM64) on Ubuntu, with the command-line tool for both, and attaches them to a draft release. To release, set `version` in [app/mygo.json](app/mygo.json), commit, and push the matching tag:
+
+```bash
+git tag v0.1.0
+```
+
+```bash
+git push origin v0.1.0
+```
+
+The workflow checks that the tag matches the version, then creates the draft release `v0.1.0` with generated notes and `SHA256SUMS`. Review it and publish it on GitHub. Running the workflow by hand (Actions → Release → Run workflow) builds everything as run artifacts without a release. [.github/workflows/ci.yml](.github/workflows/ci.yml) vets and tests every push and pull request on Linux and macOS.
 
 ## Rendering
 
@@ -157,5 +213,6 @@ engine/habit     learning clean habits from manual deletions
 engine/gitrepo   Git repository and worktree status
 engine/statedir  state folder location and FanFree migration
 prototype/       interactive HTML prototype
-docs/            README screenshots
+docs/            README screenshots, the Dock icon strip, the icon's SVG sources
+.github/         CI and release workflows
 ```

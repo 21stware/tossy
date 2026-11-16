@@ -56,7 +56,7 @@ func (a *app) applyTheme(c *ui.Context) {
 }
 
 func (a *app) view(c *ui.Context) {
-	a.now = a.clock(c.Now())
+	a.now = c.Now()
 	a.applyTheme(c)
 	a.frame = false
 	a.syncSettings()
@@ -104,22 +104,16 @@ func (a *app) view(c *ui.Context) {
 		})
 	}
 	ui.Box(c.Key("fly")).Absolute().Top(0).Left(0).Fill().PassThrough().ZIndex(50).Draw(func(p *ui.Painter, r ui.Rect) {
-		a.now = a.clock(p.Now())
+		a.now = p.Now()
 		a.paintFly(p)
 		a.paintDrag(p)
-		a.paintInkFlash(p, r)
 	})
 	a.dialogs(c)
 	// rebuild in step with the display (120Hz on ProMotion), not on a 16ms timer that beats
 	// against the refresh and drops frames
 	a.wakeForTimers(c)
 	if a.frame || a.fly.active() || len(a.binS.inflight) > 0 {
-		if a.ink() {
-			now := c.Now()
-			c.After(now.Truncate(inkStep).Add(inkStep).Sub(now))
-		} else {
-			c.AnimationFrame()
-		}
+		c.AnimationFrame()
 	}
 }
 
@@ -329,7 +323,8 @@ func (a *app) crumbs(c *ui.Context) {
 	})
 }
 
-// chartInput turns pointer input over the chart into hover, drill-down and selection.
+// chartInput turns pointer input over the chart into hover, drill-down, selection and drags
+// onto the bin.
 func (a *app) chartInput(chart ui.Element) {
 	if a.t == nil || a.scanning || a.anal != nil {
 		return
@@ -355,7 +350,9 @@ func (a *app) chartInput(chart ui.Element) {
 	if a.centerHot || a.hover != scan.None {
 		chart.Cursor(ui.CursorPointer)
 	}
-	if chart.Clicked() {
+	// a sector dragged onto the bin goes to the trash; a drag that let go is not a click
+	dropped := a.chartDrag(chart)
+	if chart.Clicked() && !dropped {
 		switch {
 		case a.centerHot:
 			a.zoomTo(a.t.Nodes[a.focus].Parent)
@@ -745,23 +742,51 @@ func (a *app) rightPane(c *ui.Context) {
 		tT = max(0, avail-listMin)
 	}
 	hT := max(0, float32(a.springTo(&a.hTsp, float64(tT))))
-	hB := a.dockNat() * (1 - a.binS.heroK)
+	hB := (a.dockNat() + dockGap) * (1 - a.binS.heroK)
 	hL := max(0, avail-hT-hB)
 	a.rightHL = hL
 	// the squeezed list and detail fade out at their lower edge instead of cutting a line in half
+	// in the panel's own paper; a long list fades a little above the dock too
+	paper := pal.bg
+	if pal.rule > 0 {
+		paper = pal.panel
+	}
 	fade := func(h, natural float32) { // call inside the panel
-		if h >= natural {
-			return
+		fh := float32(16)
+		if h < natural {
+			fh = min(22, h*.4)
 		}
-		ui.Box(c).Absolute().Left(0).Right(0).Bottom(0).Height(min(22, h*.4)).PassThrough().
+		ui.Box(c).Absolute().Left(0).Right(0).Bottom(0).Height(fh).PassThrough().
 			Draw(func(p *ui.Painter, r ui.Rect) {
 				p.FillGradient(r, ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{
-					{Color: pal.bg.Alpha(0), At: 0}, {Color: pal.bg, At: 1}}}, 0)
+					{Color: paper.Alpha(0), At: 0}, {Color: paper, At: 1}}}, 0)
 			})
 	}
 	right := ui.Column(c.Key("right")).Width(a.rightW).Shrink(0).Clip()
 	if pal.rule > 0 { // a ruled edge and the darker panel paper, for styles that need the boundary
-		right.Background(pal.panel).BorderStartWidth(1).BorderColor(pal.ink.Alpha(pal.rule))
+		// the rule runs down beside the panels and fades out above the dock: the dock's size
+		// reaches past the column, and a rule to the floor would cut through it
+		// The panel's paper goes with it, so no edge of it is left behind the dock either.
+		ink := pal.ink.Alpha(pal.rule)
+		right.Draw(func(p *ui.Painter, r ui.Rect) {
+			open := 1 - a.binS.heroK // the trash view has no dock: rule and paper to the floor
+			fadeH := 40 * open
+			end := min(r.Y+r.H, r.Y+hL+hT+1+dockGap*.5*open)
+			if open < .01 {
+				end = r.Y + r.H
+			}
+			solid := max(r.Y, end-fadeH)
+			p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: solid - r.Y}, pal.panel, 0)
+			p.Fill(ui.Rect{X: r.X, Y: r.Y, W: 1, H: solid - r.Y}, ink, 0)
+			if end-solid > .5 {
+				fr := ui.Rect{X: r.X, Y: solid, W: r.W, H: end - solid}
+				p.FillGradient(fr, ui.LinearGradient{Angle: 180,
+					Stops: []ui.GradientStop{{Color: pal.panel, At: 0}, {Color: pal.panel.Alpha(0), At: 1}}}, 0)
+				fr.W = 1
+				p.FillGradient(fr, ui.LinearGradient{Angle: 180,
+					Stops: []ui.GradientStop{{Color: ink, At: 0}, {Color: ink.Alpha(0), At: 1}}}, 0)
+			}
+		})
 	}
 	right.Children(func() {
 		rin := ui.Column(c.Key("rin")).Width(inner).Grow(1).Shrink(0).AlignItems(ui.End)

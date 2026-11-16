@@ -206,7 +206,7 @@ func TestViewFlow(t *testing.T) {
 		t.Errorf("busy button: %v", tt.Texts())
 	}
 	settle := func() {
-		for i := 0; i < 200 && (a.anal != nil || a.trashMoving > 0 || a.fly.active() || len(a.timers) > 0); i++ {
+		for i := 0; i < 200 && (a.anal != nil || a.trashMoving > 0 || a.emptying || a.fly.active() || len(a.timers) > 0); i++ {
 			time.Sleep(10 * time.Millisecond)
 			tt.Advance(50 * time.Millisecond)
 			tt.Frame()
@@ -489,44 +489,6 @@ func TestBigTree(t *testing.T) {
 	_ = tt.Image()
 	t.Logf("image %v", time.Since(t3))
 	shot(t, tt, "9-big")
-}
-
-// TestIcon regenerates resources/icon.png (TOSSY_ICON=1): a HUD sunburst on a rounded plate.
-func TestIcon(t *testing.T) {
-	if os.Getenv("TOSSY_ICON") == "" {
-		t.Skip("set TOSSY_ICON")
-	}
-	pal := palettes[0]
-	img := ui.Render(func(c *ui.Context) {
-		c.Root().Background(ui.Transparent)
-		ui.Box(c).Fill().Padding(100).Children(func() {
-			ui.Box(c).Fill().Radius(185).Background(pal.bg).Draw(func(p *ui.Painter, r ui.Rect) {
-				cx, cy := r.X+r.W/2, r.Y+r.H/2
-				spans := [][3]float32{{0, .42, 0}, {.42, .7, 1}, {.7, .88, 2}, {.88, 1, 3}}
-				for ring := 0; ring < 3; ring++ {
-					r0 := 120 + float32(ring)*68
-					for i, s := range spans {
-						if ring == 2 && i%2 == 1 {
-							continue
-						}
-						h, sat, l := pal.rampAt(s[0])
-						var path ui.Path
-						sector(&path, cx, cy, r0, r0+60, float32(s[0]*tau)+.03, float32(s[1]*tau)-.03, 0)
-						p.FillPath(&path, hsl(h, sat, l*.8, .35))
-						p.StrokePath(&path, 5, hsl(h, sat+12, l+14, .95))
-					}
-				}
-				var g ui.Path
-				p.StrokePath(circle(&g, cx, cy, 345, 0, tau).Dash(0, 6, 14), 4, pal.ink.Alpha(.35))
-			})
-		})
-	}, 1024, 1024, 1)
-	f, err := os.Create("resources/icon.png")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	png.Encode(f, img)
 }
 
 // TestZoomColours drills into the biggest folder in every style and checks that every sector

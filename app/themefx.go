@@ -6,13 +6,10 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// Effects that belong to one style: e-ink's refresh flash, the terminal's CRT power-on and
+// Effects that belong to one style: the terminal's CRT power-on and
 // typed command line, the blueprint's linework drawn before its washes.
 
 type themeFX struct {
-	flashT0   time.Time // e-ink refresh, started
-	flashFull bool      // the whole window (a full refresh), or only the chart (a partial one)
-
 	crtT0 time.Time // terminal: the tube switching on
 
 	cmd   string    // terminal: the command line being typed
@@ -25,51 +22,6 @@ const (
 	crtLife = 760 * time.Millisecond // and the overexposure settles
 	cmdRate = 22 * time.Millisecond  // a character typed
 )
-
-// ------------------------------------------------------------------------------------------
-// e-ink: refresh flash
-
-// inkRefresh flashes the panel as e-ink does when its content changes: black for a step, paper
-// for a step, then the new picture. A full refresh (a new view) takes the window, a partial one
-// (a zoom) only the chart.
-func (a *app) inkRefresh(full bool) {
-	if !a.ink() || a.now.IsZero() {
-		return
-	}
-	if !a.fx.flashT0.IsZero() && a.fx.flashFull && !full {
-		return // a full refresh under way covers this one
-	}
-	a.fx.flashT0, a.fx.flashFull = a.now, full
-	a.frame = true
-}
-
-// paintInkFlash paints the flash over the window (the overlay's r) or the chart.
-func (a *app) paintInkFlash(p *ui.Painter, r ui.Rect) {
-	f := &a.fx
-	if f.flashT0.IsZero() {
-		return
-	}
-	step := int(a.now.Sub(f.flashT0) / inkStep)
-	if step >= 2 || !a.ink() {
-		f.flashT0 = time.Time{}
-		return
-	}
-	if !f.flashFull && a.chartR.W > 0 {
-		r = a.chartR
-	}
-	if step == 0 {
-		p.Fill(r, a.pal.ink.Alpha(.94), 0)
-	} else {
-		p.Fill(r, a.pal.bg, 0)
-		// the ghost of the inversion: a faint grain left behind for one step
-		var g ui.Path
-		for y := r.Y + 2; y < r.Y+r.H; y += 4 {
-			g.MoveTo(r.X, y).LineTo(r.X+r.W, y)
-		}
-		p.StrokePath(&g, 1, a.pal.ink.Alpha(.05))
-	}
-	a.tick(p)
-}
 
 // ------------------------------------------------------------------------------------------
 // terminal: CRT power-on

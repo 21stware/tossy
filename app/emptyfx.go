@@ -42,7 +42,7 @@ func (a *app) emptyBubble(c *ui.Context, q *askState, live bool) {
 	tier := &binTiers[f.tier]
 	ox, oy := f.origin()
 	_, _, s, _, _ := f.hero()
-	rx, ry := f.toHero(ox+tier.w/2, oy+bodyTop(tier.body))
+	rx, ry := f.toHero(ox+tier.w/2, oy+tier.open)
 	// the tip lands on the lid a little right of centre: the close button stays clear
 	tipX, tipY := rx+min(26, tier.w*s*.18), ry-5*s-4
 	bw := min(286, max(232, a.rightW-56))
@@ -70,7 +70,9 @@ func (a *app) emptyBubble(c *ui.Context, q *askState, live bool) {
 	}
 	box.Draw(func(p *ui.Painter, r ui.Rect) {
 		body := ui.Rect{X: r.X, Y: r.Y + padT, W: r.W - padR, H: r.H - padT - bubbleTail}
-		path := bubblePath(body, tipX, r.Y+r.H)
+		// the tip from the box, not the window: while the bubble pops (scaled), r is in the
+		// box's own space, from 0, and a tip in window space dragged the tail off to the right
+		path := bubblePath(body, r.X+tipX-left, r.Y+r.H)
 		ink := pal.text
 		fill := pal.panel
 		shadow := ink
@@ -236,7 +238,7 @@ func (a *app) paintZapBalls(p *ui.Painter, ox, oy float32) {
 	f := &a.binS
 	d := a.now.Sub(f.dumpT0)
 	white := ui.RGBA(255, 255, 255, 1)
-	if a.ink() { // e-ink empties with a full refresh: what goes turns to ink, then to paper
+	if a.ink() { // e-ink has no white light: what goes turns to ink as it collapses
 		white = a.pal.ink
 	}
 	flash := float32(0)
@@ -271,16 +273,9 @@ func (a *app) paintZapBalls(p *ui.Painter, ox, oy float32) {
 			a.paintBall(p, x, y, r, white, 1)
 		}
 	}
-	if flash > 0 {
+	if flash > 0 && !a.ink() { // a glow inside the bin; e-ink has no light to give
 		T := &binTiers[f.tier]
-		al := .35 * flash
-		if a.ink() {
-			al = float32(1) // the panel's black frame, one step long
-			if flash < .5 {
-				al = 0
-			}
-		}
-		fillR(p, ui.Rect{X: ox, Y: oy + T.m - 4, W: T.w, H: T.b - T.m + 4}, white.Alpha(al), 0)
+		fillR(p, ui.Rect{X: ox, Y: oy + T.m - 4, W: T.w, H: T.b - T.m + 4}, white.Alpha(.35*flash), 0)
 	}
 	if d > f.dumpDur {
 		f.dumpT0, f.dump = time.Time{}, nil
@@ -346,7 +341,7 @@ func (a *app) paintEmptyDone(p *ui.Painter) {
 	T := &binTiers[f.tier]
 	ox, oy := f.origin()
 	_, _, s, _, _ := f.hero()
-	cx, cy := f.toHero(ox+T.w/2, oy+bodyTop(T.body))
+	cx, cy := f.toHero(ox+T.w/2, oy+T.open)
 	w := T.w * s
 	safe := a.pal.level[safety.Safe]
 	e, fade := float32(easeOut(k)), float32(1-easeIn(k))

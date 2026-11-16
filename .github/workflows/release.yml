@@ -1,0 +1,83 @@
+name: Release
+
+# A tag v<version> builds the macOS app and the Linux packages, with the command-line tool, and
+# attaches them to a draft release, which you publish. Run by hand, it builds them as artifacts
+# of the run, without a release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # signing, notarization and disk images need macOS
+          - { name: macOS, os: macos-latest, platform: darwin/universal, cli: "darwin/arm64 darwin/amd64" }
+          - { name: Linux, os: ubuntu-latest, platform: "linux/amd64,linux/arm64", cli: "linux/amd64 linux/arm64" }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Check the tag against the version
+        if: github.ref_type == 'tag'
+        run: test "$GITHUB_REF_NAME" = "v$(jq -r .version app/mygo.json)"
+      - name: Build the app
+        working-directory: app
+        run: go run github.com/egoist/mygo/cmd/mygo build -platform "${{ matrix.platform }}" .
+      - name: Build the command-line tool
+        run: |
+          version=$(jq -r .version app/mygo.json)
+          mkdir -p dist
+          for t in ${{ matrix.cli }}; do
+            os=${t%/*} arch=${t#*/}
+            dir=$(mktemp -d)
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w" -o "$dir/tossy" ./cmd/tossy
+            tar -czf "dist/tossy-cli-$version-$os-$arch.tar.gz" -C "$dir" tossy
+          done
+      - name: Collect the files
+        run: |
+          shopt -s nullglob
+          files=(app/build/*/*.dmg app/build/*/*.deb app/build/*/*.rpm app/build/*/*.tar.gz)
+          cp "${files[@]}" dist/
+          # one install.sh serves every architecture
+          if [ -f app/build/linux-amd64/install.sh ]; then cp app/build/linux-amd64/install.sh dist/; fi
+          ls -la dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the draft release and its files
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+              --draft --verify-tag --title "Tossy ${GITHUB_REF_NAME#v}" --generate-notes
+          fi

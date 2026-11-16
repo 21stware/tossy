@@ -32,6 +32,7 @@ type arc struct {
 	h, s, l float32
 	leaf    bool
 	label   bool
+	gone    float32 // how far it has faded out on a drill: 0 shown, 1 gone
 	lv      safety.Level
 	path    *shape
 }
@@ -46,6 +47,7 @@ type geoKey struct {
 	pal   *palette
 	grow  float32
 	morph float32
+	zk    float32
 }
 
 type sunburst struct {
@@ -57,6 +59,8 @@ type sunburst struct {
 	cx, cy, rad, r0, rw float32
 
 	from    view
+	fromF   int32   // the focus the zoom left
+	zk      float64 // how far along the zoom is, eased: 1 at rest
 	zoomT0  time.Time
 	zooming bool
 	intro   time.Time
@@ -164,6 +168,7 @@ func easeOut(t float64) float64 { return 1 - math.Pow(1-t, 3) }
 func (a *app) viewAt(now time.Time) (view, bool) {
 	tv := a.targetView()
 	s := &a.sun
+	s.zk = 1
 	if !s.zooming {
 		s.cur = tv
 		return tv, false
@@ -175,6 +180,7 @@ func (a *app) viewAt(now time.Time) (view, bool) {
 		return tv, false
 	}
 	e := ease(max(0, k))
+	s.zk = e
 	f := s.from
 	s.cur = view{f.x0 + (tv.x0-f.x0)*e, f.x1 + (tv.x1-f.x1)*e, f.d + (tv.d-f.d)*e}
 	return s.cur, true
@@ -184,7 +190,7 @@ func (s *sunburst) zoomFrom(a *app) {
 	if s.cur.x1 == 0 {
 		s.cur = a.targetView()
 	}
-	s.from = s.cur
+	s.from, s.fromF = s.cur, a.focus
 	s.zoomT0 = a.now
 	s.zooming = a.motion()
 }
@@ -213,6 +219,51 @@ func growAt(k float64, ring float64) float32 {
 		return 1
 	}
 	return float32(easeOut(t))
+}
+
+// nodeSt is where a node stands to a drill's deep focus (see drill).
+type nodeSt uint8
+
+const (
+	stUnder nodeSt = iota // the deep focus or under it (or no drill: everything)
+	stChain               // an ancestor of the deep focus
+	stOff                 // neither: it leaves the view on the way in
+)
+
+// drill describes the zoom under way when it goes straight down or up a branch: deep is the
+// focus at its deeper end, sv the view at its shallow end, and f how big what leaves the view
+// is, 1 to 0 on the way in and 0 to 1 on the way out. ok is false at rest and for a jump
+// sideways.
+func (a *app) drill() (deep int32, sv view, f float64, ok bool) {
+	s := &a.sun
+	if !s.zooming || s.zk >= 1 || s.fromF == a.focus {
+		return 0, view{}, 0, false
+	}
+	switch {
+	case a.isUnder(a.focus, s.fromF): // in
+		return a.focus, s.from, 1 - s.zk, true
+	case a.isUnder(s.fromF, a.focus): // out
+		return s.fromF, a.targetView(), s.zk, true
+	}
+	return 0, view{}, 0, false
+}
+
+// ringR is the outer radius of ring x, fractional on a zoom. Ring 0 is the centre disc, and
+// the rings inside it shrink to the centre point: a sector drilled into slides in to become the
+// disc, and its ancestors shrink away into the middle of it.
+func (s *sunburst) ringR(x float64) float32 {
+	if x >= 0 {
+		return s.r0 + float32(x)*s.rw
+	}
+	return s.r0 * float32(max(0, 1+x))
+}
+
+// ringSpan is the radii of ring x (> 0) grown g of the way out and scaled by sc about the
+// centre, and how far it has faded: a ring sliding into the centre disc fades as it goes.
+func (s *sunburst) ringSpan(x float64, gap, g, sc float32) (r0, r1, gone float32) {
+	r0 = s.ringR(x-1) + gap*float32(min(1, x))
+	r1 = r0 + (s.ringR(x)-r0)*g
+	return r0 * sc, r1 * sc, float32(max(0, 1-x))
 }
 
 // layout computes the arcs of view v in box r.
@@ -244,8 +295,23 @@ func (a *app) layout(v view, r ui.Rect, intro float64) {
 		np++
 		return p
 	}
-	var rec func(n int32, nx0 float64, depth int, idx int)
-	rec = func(n int32, nx0 float64, depth int, idx int) {
+	// A drill (see drill) is laid out in two passes. The parts that leave (or, going back up,
+	// come back) stay where they are in the shallow view and shrink into the centre point, scaled
+	// by f, fading as they go; they are painted first, under the rest. Then the deep focus, its
+	// ancestors and what is under it follow the tweened view v, the rings below ring 1 sliding
+	// into the centre disc (see ringR). A sideways jump has one pass, the view tweened.
+	deep, sv, f, drill := a.drill()
+	stOf := func(n int32, pst nodeSt) nodeSt {
+		switch {
+		case !drill || pst == stUnder || n == deep:
+			return stUnder
+		case pst == stOff || !a.isUnder(deep, n):
+			return stOff
+		}
+		return stChain
+	}
+	var rec func(v view, k float64, outer bool, sc float32, n int32, nx0 float64, depth int, idx int, st nodeSt)
+	rec = func(v view, k float64, outer bool, sc float32, n int32, nx0 float64, depth int, idx int, st nodeSt) {
 		nd := &t.Nodes[n]
 		nx1 := nx0 + float64(nd.Size)/total
 		a0, a1 := (nx0-v.x0)*k, (nx1-v.x0)*k
@@ -256,18 +322,17 @@ func (a *app) layout(v view, r ui.Rect, intro float64) {
 		if ring > rings+.001 {
 			return
 		}
-		if ring > 0 {
+		if ring > 0 && (outer == (st == stOff)) {
 			g := growAt(intro, ring)
 			if g <= 0 {
 				return
 			}
-			r0 := s.r0 + float32(max(0, ring-1))*s.rw + gap
-			r1 := r0 + (s.r0+float32(ring)*s.rw-r0)*g
-			if r1-r0 > .5 {
+			r0, r1, gone := s.ringSpan(ring, gap, g, sc)
+			if r1-r0 > .5*sc {
 				b0, b1 := float32(max(0, a0)), float32(min(tau, a1))
 				h, sat, l := a.nodeColor(n, nx0, nx1, depth, idx)
-				ar := arc{node: n, size: nd.Size, a0: b0, a1: b1, r0: r0, r1: r1, ring: int(math.Round(ring)), h: h, s: sat, l: l, leaf: nd.First == scan.None}
-				ar.label = g >= 1 && r1-r0 > 15 && (b1-b0)*(r0+r1)/2 > 54
+				ar := arc{node: n, size: nd.Size, a0: b0, a1: b1, r0: r0, r1: r1, ring: int(math.Round(ring)), h: h, s: sat, l: l, leaf: nd.First == scan.None, gone: gone}
+				ar.label = g >= 1 && gone <= 0 && r1-r0 > 15 && (b1-b0)*(r0+r1)/2 > 54
 				padA := min(.8/r0, (b1-b0)*.2)
 				ar.lv = a.ev.Verdict(n).Level()
 				ar.path = newPath().sector(s.cx, s.cy, r0, r1, b0+padA, b1-padA, cr)
@@ -281,15 +346,20 @@ func (a *app) layout(v view, r ui.Rect, intro float64) {
 		i := 0
 		for c := nd.First; c != scan.None; c = t.Nodes[c].Next {
 			cs := float64(t.Nodes[c].Size) / total
+			cst := stOf(c, st)
+			if (outer && cst == stUnder) || (!outer && cst == stOff) {
+				x += cs // not this pass's
+				i++
+				continue
+			}
 			c0, c1 := (x-v.x0)*k, (x+cs-v.x0)*k
-			if c1-c0 < minA {
+			if c1-c0 < minA && (outer || st != stChain) {
 				// sorted by size: everything from here on is small → one quiet aggregate
 				ringA := ring + 1
 				g0, g1 := float32(max(0, c0)), float32(min(tau, a1))
 				gg := growAt(intro, ringA)
 				if ringA > 0 && ringA <= rings && g1-g0 > .0008 && gg > 0 {
-					r0 := s.r0 + float32(max(0, ringA-1))*s.rw + gap
-					r1 := r0 + (s.r0+float32(ringA)*s.rw-r0)*gg
+					r0, r1, gone := s.ringSpan(ringA, gap, gg, sc)
 					var sz int64
 					cnt := 0
 					for d := c; d != scan.None; d = t.Nodes[d].Next {
@@ -297,17 +367,27 @@ func (a *app) layout(v view, r ui.Rect, intro float64) {
 						cnt++
 					}
 					padA := min(.8/r0, (g1-g0)*.2)
-					s.arcs = append(s.arcs, arc{node: scan.None, parent: n, count: cnt, size: sz, a0: g0, a1: g1, r0: r0, r1: r1, ring: int(math.Round(ringA)),
+					s.arcs = append(s.arcs, arc{node: scan.None, parent: n, count: cnt, size: sz, a0: g0, a1: g1, r0: r0, r1: r1, ring: int(math.Round(ringA)), gone: gone,
 						path: newPath().sector(s.cx, s.cy, r0, r1, g0+padA, g1-padA, cr)})
 				}
 				break
 			}
-			rec(c, x, depth+1, i)
+			rec(v, k, outer, sc, c, x, depth+1, i, cst)
 			x += cs
 			i++
 		}
 	}
-	rec(0, 0, 0, 0)
+	root := stUnder
+	if drill {
+		root = stChain
+		if f > 0 {
+			rec(sv, tau/max(1e-12, sv.x1-sv.x0), true, float32(f), 0, 0, 0, 0, root)
+			for i := range s.arcs {
+				s.arcs[i].gone = 1 - (1-s.arcs[i].gone)*float32(f)
+			}
+		}
+	}
+	rec(v, k, false, 1, 0, 0, 0, 0, root)
 	a.applyMorph()
 	a.arcCount = len(s.arcs)
 }
@@ -411,7 +491,7 @@ func (s *sunburst) hit(x, y float32) int {
 	a := float32(ang)
 	for i := len(s.arcs) - 1; i >= 0; i-- {
 		h := &s.arcs[i]
-		if r >= h.r0-1 && r < h.r1 && a >= h.a0 && a < h.a1 {
+		if h.gone <= 0 && r >= h.r0-1 && r < h.r1 && a >= h.a0 && a < h.a1 {
 			return i
 		}
 	}
@@ -444,7 +524,7 @@ func (a *app) paintSun(p *ui.Painter, r ui.Rect) {
 	t0 := time.Now()
 	pal := a.pal
 	now := p.Now()
-	a.now = a.clock(now)
+	a.now = now
 	a.paintDeco(p, r)
 	if a.t == nil {
 		return
@@ -456,7 +536,7 @@ func (a *app) paintSun(p *ui.Painter, r ui.Rect) {
 	v, moving := a.viewAt(now)
 	intro := a.sun.introK(now)
 	a.sun.mk = a.sun.morphK(now)
-	key := geoKey{a.ver, v, r, a.mode, pal, float32(intro), float32(a.sun.mk)}
+	key := geoKey{a.ver, v, r, a.mode, pal, float32(intro), float32(a.sun.mk), float32(a.sun.zk)}
 	if key != a.sun.key {
 		a.layout(v, r, intro)
 		a.sun.key = key
@@ -487,7 +567,11 @@ func (a *app) paintSun(p *ui.Painter, r ui.Rect) {
 		p.StrokePolyline(s.guide, 1, over(pal.ink.Alpha(.07), a.ground()))
 	}
 
-	dim := a.hover != scan.None
+	carried := scan.None // a sector dragged towards the bin fades where it was, as a dragged row does
+	if a.drag.on && a.drag.chart {
+		carried = a.drag.node
+	}
+	dim := a.hover != scan.None && carried == scan.None
 	hl := a.highlight()
 	hlA := float32(1)
 	if hl != nil { // the evaluation dims everything it will not touch, fading in
@@ -509,9 +593,12 @@ func (a *app) paintSun(p *ui.Painter, r ui.Rect) {
 			if node == scan.None {
 				node = h.parent
 			}
-			alpha := float32(1)
+			alpha := 1 - h.gone
 			if dim && !a.isUnder(node, a.hover) {
-				alpha = .35
+				alpha *= .35
+			}
+			if carried != scan.None && a.isUnder(node, carried) {
+				alpha *= .35
 			}
 			if hl != nil && !a.underAny(node, hl) {
 				alpha *= hlA
@@ -544,7 +631,7 @@ func (a *app) paintSun(p *ui.Painter, r ui.Rect) {
 		w = 2.5
 	}
 	for i := range s.arcs {
-		if h := &s.arcs[i]; h.node == a.selected && a.selected != a.focus {
+		if h := &s.arcs[i]; h.node == a.selected && a.selected != a.focus && h.gone <= 0 {
 			outline(p, h.path, w, pal.text)
 		}
 	}
@@ -856,12 +943,12 @@ func (a *app) paintCenter(p *ui.Painter) {
 			p.FillPath(circle(&c, s.cx, s.cy, s.r0-2, 0, tau), pal.ink.Alpha(.035))
 		}
 		for i := 0; i < dep; i++ {
-			al := float32(.17)
+			al := float32(.2)
 			if a.centerHot && i == 0 {
 				al = .55
 			}
 			var c ui.Path
-			p.StrokePath(circle(&c, s.cx, s.cy, s.r0-5-float32(i)*4.5, 0, tau), 2, pal.ink.Alpha(al-float32(i)*.03))
+			p.StrokePath(circle(&c, s.cx, s.cy, s.r0-6-float32(i)*7, 0, tau), 3.5, pal.ink.Alpha(al-float32(i)*.03))
 		}
 	}
 	info := a.focus

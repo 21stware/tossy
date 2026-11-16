@@ -276,7 +276,7 @@ func (e *Evaluator) Candidates(scope int32, max Level) []Candidate {
 	return out
 }
 
-// LevelSums adds up file sizes under i by verdict level.
+// LevelSums adds up the sizes under i by verdict level; they sum to the size of i.
 func (e *Evaluator) LevelSums(i int32) (s [4]int64) {
 	t := e.t
 	var rec func(j int32, lv Level)
@@ -289,13 +289,13 @@ func (e *Evaluator) LevelSums(i int32) (s [4]int64) {
 			lv = Review
 		}
 		n := &t.Nodes[j]
-		if n.First == scan.None {
-			s[lv] += n.Size
-			return
-		}
+		// a node's own blocks (a directory's are 4 KB on ext4, none on APFS) count at its level
+		own := n.Size
 		for c := n.First; c != scan.None; c = t.Nodes[c].Next {
+			own -= t.Nodes[c].Size
 			rec(c, lv)
 		}
+		s[lv] += own
 	}
 	rec(i, e.Verdict(i).Level())
 	return

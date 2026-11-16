@@ -153,7 +153,7 @@ var palettes = []*palette{
 		corner: 6, gap: 3, motion: true, mono: "monospace", radius: 10,
 	},
 	{
-		name: "eink", label: "墨水屏", desc: "E-ink：纸张底色、纯灰阶与阴影线，只有废纸篓以分步刷新动起来，省电护眼", dark: false,
+		name: "eink", label: "墨水屏", desc: "E-ink：纸张底色、纯灰阶与阴影线，只有废纸篓会动，省电护眼", dark: false,
 		bg: ui.Hex("#f2efe7"), panel: ui.Hex("#f2efe7"), panel2: ui.Hex("#e8e4da"), line: ui.RGBA(0, 0, 0, .2),
 		hov: ui.RGBA(0, 0, 0, .05), sel: ui.RGBA(0, 0, 0, .1),
 		text: ui.Hex("#1b1b1b"), t2: ui.Hex("#3a3a3a"), t3: ui.Hex("#666666"), t4: ui.Hex("#9a9a9a"),

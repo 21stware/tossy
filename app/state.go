@@ -376,7 +376,6 @@ func (a *app) zoomTo(i int32) {
 		return
 	}
 	a.sun.zoomFrom(a)
-	a.inkRefresh(false)
 	a.rowsT0, a.rowsDx = a.now, 1
 	if a.isUnder(a.focus, i) {
 		a.rowsDx = -1 // going up: rows come in from the left

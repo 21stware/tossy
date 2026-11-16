@@ -65,7 +65,18 @@ func TestGitWorktrees(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		tt.Frame()
 	}
-	for _, s := range []string{"Git worktree · 共 4 个工作区 · 1 个新文件未跟踪", "1 个新文件未跟踪", "app · main（主工作区）", "node_modules", "可重建的开发缓存 · 588.0 KB", "此仓库有 3 个 worktree，本机可见部分合计 1.76 MB。合并后不再需要的，建议在仓库中运行 git worktree remove 移除。"} {
+	// the sizes are of the disk's blocks, which differ by filesystem (ext4 gives a directory 4 KB,
+	// APFS none): 588.0 KB and 1.76 MB on macOS
+	var devSize, famSize int64
+	for _, d := range a.devCaches(w2) {
+		devSize += d.size
+	}
+	for _, w := range []string{"agent-1", "agent-2", "agent-3"} {
+		famSize += a.t.Nodes[a.t.Find(filepath.Join(root, "worktrees", w))].Size
+	}
+	for _, s := range []string{"Git worktree · 共 4 个工作区 · 1 个新文件未跟踪", "1 个新文件未跟踪", "app · main（主工作区）", "node_modules",
+		"可重建的开发缓存 · " + fmtSize(devSize),
+		"此仓库有 3 个 worktree，本机可见部分合计 " + fmtSize(famSize) + "。合并后不再需要的，建议在仓库中运行 git worktree remove 移除。"} {
 		if !tt.HasText(s) {
 			t.Errorf("detail lacks %q: %v", s, tt.Texts())
 		}
