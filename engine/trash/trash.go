@@ -175,10 +175,22 @@ func (b *Bin) Restore(id string) (*Item, error) {
 	return it, b.saveLocked()
 }
 
+// Step is Empty's progress: an item about to be deleted (Done false), then the same item once
+// it is gone or has failed (Done true, with Err).
+type Step struct {
+	Item Item
+	Done bool
+	Err  error
+}
+
 // Empty permanently deletes the given items (all Tossy items if ids is nil). Returns bytes freed.
 // The lock is not held while files are deleted, which can take long: List and Size stay
 // responsive, and an item restored meanwhile is skipped.
-func (b *Bin) Empty(ids []string) (freed int64, err error) {
+func (b *Bin) Empty(ids []string) (freed int64, err error) { return b.EmptyWith(ids, nil) }
+
+// EmptyWith is Empty, reporting each item as it starts and ends to step (if not nil), from the
+// calling goroutine.
+func (b *Bin) EmptyWith(ids []string, step func(Step)) (freed int64, err error) {
 	b.mu.Lock()
 	if ids == nil {
 		for id := range b.items {
@@ -201,7 +213,14 @@ func (b *Bin) Empty(ids []string) (freed int64, err error) {
 		if it.marked() {
 			purge = func(it *Item) error { return removeAll(it.Stored) }
 		}
-		if e := purge(it); e != nil {
+		if step != nil {
+			step(Step{Item: *it})
+		}
+		e := purge(it)
+		if step != nil {
+			step(Step{Item: *it, Done: true, Err: e})
+		}
+		if e != nil {
 			errs = append(errs, e)
 			continue
 		}

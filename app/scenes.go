@@ -166,22 +166,8 @@ func (a *app) closeTop(H float32) float32 {
 	f := &a.binS
 	room := heroBinH(H, a.sz)
 	T := &binTiers[f.tier]
-	top := bodyTop(T.body) // the rim sits on the body's top edge; the room above is the lid's
-	drawn := (T.h - top + 5) * max(1, f.heroS)
+	drawn := (T.h + 5) * max(1, f.heroS)
 	return max(stageTop, stageTop+room-drawn)
-}
-
-// bodyTop reads y from a body path's leading "Mx y".
-func bodyTop(d string) float32 {
-	i := 0
-	for i < len(d) && d[i] != ' ' {
-		i++
-	}
-	var y float32
-	for i++; i < len(d) && d[i] >= '0' && d[i] <= '9'; i++ {
-		y = y*10 + float32(d[i]-'0')
-	}
-	return y
 }
 
 // heroBinH is the hero bin's height in the trash view, by window height and size class.

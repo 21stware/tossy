@@ -13,33 +13,97 @@ import (
 	"github.com/21stware/tossy/engine/trash"
 )
 
-// The trash bin grows with what is in it: a desk basket, a waste basket, a pedal bin, a wheelie
-// bin, a skip. Items lie in it as balls packed by a height map, coloured by safety level; the
-// lid opens while things fly in, the bin bumps as each lands, and tips its pile out on empty.
-// Ported from the prototype's TIERS, layoutPile and the bin CSS animations.
+// The trash bin grows with what is in it: a desk basket, a waste basket (the app icon's bin), a
+// pedal bin, a wheelie bin, a skip and a roll-off container, all of one moulded plastic: a rolled
+// rim, a tinted body the pile shows through, pressed grooves. Items lie in it as balls packed by a
+// height map, coloured by safety level; lids open and rims light while things fly in, the bin
+// bumps as each lands, and tips its pile out on empty. Ported from the prototype's TIERS,
+// layoutPile and the bin CSS animations.
 
 type binTier struct {
-	name   string
-	w, h   float32
-	m, b   float32    // pile top and bottom
-	tx, bx [2]float32 // opening and floor, left and right
-	f      float64    // trash/capacity at which this tier starts
-	lids   int
-	pivots [2][2]float32
-	body   string
+	w, h float32
+	f    float64 // trash/capacity at which this tier starts
+
+	// the rim: left, top, width; its corners' radius, its depth (the ellipse's half height) and
+	// the rolled lip's thickness
+	rx, ry, rw, rr, rd, rt float32
+	// the body: top y and sides, bottom y and sides (where the sides would meet the floor), the
+	// bottom corners' radius and the floor's sag
+	y0, l0, r0, y1, l1, r1, bc, sag float32
+
+	grooves []groove
+	gw      float32 // their width
+
+	lids   int     // 0, 1 (hinged on the left) or 2 (on the left and on the right)
+	lidT   float32 // a lid's thickness
+	handle bool    // a bar behind the lid's hinge
+	pedal  bool
+	wheels [][3]float32 // x, y, r
+	rail   bool         // a skid under the body
+
+	// derived (see derive): the pile's top and bottom, its sides at the top and at the floor,
+	// and the opening's middle
+	m, b   float32
+	tx, bx [2]float32
+	open   float32
+}
+
+// groove is a pressed line in the body: vertical at fraction at of the body's width from y a to
+// y b, or (flat) horizontal at y at from fraction a of the width to fraction b.
+type groove struct {
+	at, a, b float32
+	flat     bool
+}
+
+func (T *binTier) sideL(y float32) float32 { return T.l0 + (T.l1-T.l0)*(y-T.y0)/(T.y1-T.y0) }
+func (T *binTier) sideR(y float32) float32 { return T.r0 + (T.r1-T.r0)*(y-T.y0)/(T.y1-T.y0) }
+
+func (T binTier) derive() binTier {
+	T.m = T.ry + 2*T.rd + T.rt*.5
+	T.b = T.y1 - 1.5
+	T.tx = [2]float32{T.sideL(T.m) + 2, T.sideR(T.m) - 2}
+	T.bx = [2]float32{T.l1 + T.bc*.75, T.r1 - T.bc*.75}
+	T.open = T.ry + T.rd
+	return T
+}
+
+// vgrooves spaces n vertical grooves across the body, from y a to y b.
+func vgrooves(n int, lo, hi, a, b float32) []groove {
+	g := make([]groove, n)
+	for i := range g {
+		g[i] = groove{at: lo + (hi-lo)*float32(i)/float32(max(1, n-1)), a: a, b: b}
+	}
+	return g
 }
 
 var binTiers = []binTier{
-	{name: "桌面纸篓", w: 54, h: 60, m: 16, b: 57, tx: [2]float32{6, 48}, bx: [2]float32{9, 45}, f: 0,
-		body: "M6 15H48L45.2 55.5Q44.9 58 42.4 58H11.6Q9.1 58 8.8 55.5Z"},
-	{name: "废纸篓", w: 70, h: 78, m: 18, b: 75, tx: [2]float32{5, 65}, bx: [2]float32{12, 58}, f: .004,
-		body: "M5 17H65L58.6 73.6Q58.2 76 55.8 76H14.2Q11.8 76 11.4 73.6Z"},
-	{name: "垃圾桶", w: 84, h: 100, m: 26, b: 95, tx: [2]float32{8, 76}, bx: [2]float32{14, 70}, f: .03, lids: 1,
-		pivots: [2][2]float32{{6, 21}}, body: "M8 24H76L70.2 90.5Q69.6 96 64 96H20Q14.4 96 13.8 90.5Z"},
-	{name: "大垃圾桶", w: 108, h: 136, m: 38, b: 121, tx: [2]float32{10, 98}, bx: [2]float32{16, 92}, f: .1, lids: 1,
-		pivots: [2][2]float32{{6, 33}}, body: "M10 36H98L92.4 118Q92 122 88 122H20Q16 122 15.6 118Z"},
-	{name: "垃圾箱", w: 172, h: 118, m: 38, b: 101, tx: [2]float32{9, 163}, bx: [2]float32{17, 155}, f: .22, lids: 2,
-		pivots: [2][2]float32{{6, 33}, {166, 33}}, body: "M8 36H164L156 102H16Z"},
+	// desk basket: short and wide
+	binTier{w: 46, h: 42, f: 0, rx: 0, ry: 0, rw: 46, rr: 6.3, rd: 4.5, rt: 3.3,
+		y0: 8.6, l0: 2, r0: 44, y1: 41, l1: 8, r1: 38, bc: 6.5, sag: .8,
+		grooves: vgrooves(3, .3, .7, 18, 33), gw: 4}.derive(),
+	// waste basket: the app icon's bin
+	binTier{w: 58, h: 59.2, f: .004, rx: 0, ry: 0, rw: 58, rr: 7.9, rd: 5.7, rt: 4.2,
+		y0: 11.1, l0: 2.5, r0: 55.5, y1: 58.2, l1: 8.1, r1: 49.9, bc: 8.6, sag: 1.2,
+		grooves: vgrooves(3, .33, .67, 25.7, 51.6), gw: 5.2}.derive(),
+	// pedal bin: taller, a lid and a pedal
+	binTier{w: 70, h: 100, f: .03, rx: 2, ry: 9, rw: 66, rr: 9, rd: 6.4, rt: 4.8,
+		y0: 22, l0: 4.5, r0: 65.5, y1: 96, l1: 10.5, r1: 59.5, bc: 9, sag: 1.2,
+		grooves: vgrooves(3, .33, .67, 44, 84), gw: 5.6, lids: 1, lidT: 7, pedal: true}.derive(),
+	// wheelie bin: tall and nearly straight, a lid, a handle and two wheels
+	binTier{w: 88, h: 132, f: .08, rx: 2, ry: 12, rw: 84, rr: 10, rd: 7, rt: 5.5,
+		y0: 26, l0: 4.5, r0: 83.5, y1: 121, l1: 9, r1: 79, bc: 8, sag: 1,
+		grooves: vgrooves(3, .3, .7, 50, 108), gw: 6, lids: 1, lidT: 8, handle: true,
+		wheels: [][3]float32{{13, 123, 9}, {75, 123, 9}}}.derive(),
+	// skip: wide with sloped ends, two lids, ribs and casters
+	binTier{w: 150, h: 104, f: .15, rx: 2, ry: 11, rw: 146, rr: 10, rd: 7, rt: 5,
+		y0: 25, l0: 4, r0: 146, y1: 93, l1: 17, r1: 133, bc: 7, sag: .5,
+		grooves: []groove{{at: 48, a: .1, b: .9, flat: true}, {at: 70, a: .12, b: .88, flat: true}}, gw: 5,
+		lids: 2, lidT: 8, wheels: [][3]float32{{30, 97.5, 6}, {120, 97.5, 6}}}.derive(),
+	// roll-off container: long and low, open, ribbed, on a skid
+	binTier{w: 180, h: 92, f: .26, rx: 2, ry: 2, rw: 176, rr: 8, rd: 6, rt: 4.5,
+		y0: 14, l0: 4, r0: 176, y1: 78, l1: 7, r1: 173, bc: 6,
+		grooves: vgrooves(7, .1, .9, 25, 70), gw: 5, rail: true,
+		wheels: [][3]float32{{22, 87, 5}, {90, 87, 5}, {158, 87, 5}}}.derive(),
 }
 
 func tierFor(size, capacity int64) int {
@@ -99,6 +163,7 @@ type binState struct {
 	dumpDur time.Duration
 	dump    []dumpBall
 	doneT0  time.Time // and the bin shines once it is empty
+	truck   *truckRun // or a vehicle takes the pile away (see truck.go)
 	freed   string
 	freedT  time.Time
 
@@ -158,7 +223,14 @@ func (a *app) stepHero() {
 }
 
 // dockS is the bin's scale at rest in the dock: the tiers are drawn at 1 and zoomed by it.
-const dockS = 1.3
+// The small bins (the basket, the waste basket) are zoomed further, up to dockSmax, so the
+// empty or nearly empty dock still shows a real bin.
+const dockS, dockSmax = 1.3, 1.6
+
+// dockScale is the dock zoom for a tier.
+func dockScale(tier int) float32 {
+	return max(dockS, min(dockSmax, 96/binTiers[tier].h))
+}
 
 // dockFS is the font size of the dock's trash size text.
 const dockFS = 26
@@ -168,7 +240,8 @@ func (f *binState) hero() (bx, by, s, dx, dy float32) {
 	T := &binTiers[f.tier]
 	bx, by = f.right-T.w/2, f.bottom
 	k := f.heroK
-	return bx, by, dockS + (f.heroS-dockS)*k, (f.heroTX - bx) * k, (f.heroTY - by) * k
+	ds := dockScale(f.tier)
+	return bx, by, ds + (f.heroS-ds)*k, (f.heroTX - bx) * k, (f.heroTY - by) * k
 }
 
 // toHero maps a point of the bin in its dock slot to where the hero bin shows it.
@@ -188,6 +261,10 @@ func (a *app) trashEnts() []pileEnt {
 	f := &a.binS
 	if a.bin == nil {
 		return nil
+	}
+	if f.truck != nil { // the pile stays as it was until the truck has gone
+		f.ents = append(f.ents[:0], f.truck.ents...)
+		return f.ents
 	}
 	items := a.bin.List()
 	sort.SliceStable(items, func(i, j int) bool { return items[i].When.Before(items[j].When) })
@@ -311,6 +388,8 @@ func (a *app) lidAngle() float32 {
 		target = 58
 	case len(f.inflight) > 0 || (!f.lastLand.IsZero() && a.now.Sub(f.lastLand) < 220*time.Millisecond):
 		target = 42
+	case f.truck != nil && a.now.Sub(f.truck.t0) > truckArrive-200*time.Millisecond && f.truck.leaveT0.IsZero():
+		target = 55 // open while the truck loads
 	}
 	if target != f.lidTo {
 		f.lidFrom, f.lidTo, f.lidT0 = f.lid, target, a.now
@@ -360,21 +439,239 @@ func (a *app) tierScale() (sx, sy, op float32) {
 // ------------------------------------------------------------------------------------------
 // painting
 
+// binInk is the bin's material, in five shades of one colour, made the way the style draws its
+// chart: the icon's mint plastic by default; a translucent body with glowing edges on the HUD;
+// a cobalt plate inked in navy on the mech; graphite on classic; white or phosphor linework on
+// the blueprint and the terminal; light grey hardware with an orange rim on TE; candy in the
+// theme's colour, thickly inked, on the cartoon styles; and e-ink's outlines.
 type binInk struct {
-	back, open, openLine, bodyFill, bodyLine, rim, rimFill, lid, lid2, lidHi, handle, wheel, wheelLine, hub, detail ui.Color
+	deep, dark, base, light, hi ui.Color
+	rubber                      ui.Color
+	glass                       float32 // the body's opacity: the pile shows through it
+	line                        bool    // linework, no light (e-ink, blueprint, terminal)
+	ink                         ui.Color
+	wash                        float32  // linework: the body's faint fill
+	glow                        bool     // lines and edges glow
+	edge                        ui.Color // an outline over the solid parts, if not zero
+	edgeW                       float32
+	rim                         ui.Color // the rim and the lids in a colour of their own, if not zero
+	// soft shades it high-key, as clean light hardware: a colourless grey shaded with as
+	// much black as tinted plastic takes turns to mud, its insides most of all
+	soft bool
+}
+
+// shades sets the five shades from base.
+func (ik binInk) shades(base ui.Color) binInk {
+	black, white := ui.RGB(0, 0, 0), ui.RGB(255, 255, 255)
+	deep, dark, light, hi := float32(.55), float32(.3), float32(.38), float32(.7)
+	if ik.soft {
+		deep, dark, light, hi = .24, .1, .55, .85
+	}
+	ik.deep, ik.dark, ik.base, ik.light, ik.hi = base.Mix(black, deep), base.Mix(black, dark), base, base.Mix(white, light), base.Mix(white, hi)
+	return ik
+}
+
+// rimInk is the ink of the rim and the lids.
+func (ik binInk) rimInk() binInk {
+	if ik.rim.A == 0 {
+		return ik
+	}
+	return ik.shades(ik.rim)
 }
 
 func (a *app) binInk() binInk {
-	ink := a.pal.ink
-	shade := ui.RGBA(0, 0, 0, .45)
-	if !a.pal.dark {
-		shade = ink.Alpha(.1)
+	pal := a.pal
+	black, white := ui.RGB(0, 0, 0), ui.RGB(255, 255, 255)
+	base := pal.level[0]
+	switch pal.art {
+	case artHolo, artPlate:
+		base = pal.accent
+	case artSolid:
+		base = pal.t2.Mix(black, .25)
+	case artTE:
+		base = ui.Hex("#e2e2de") // the panels' off-white
+	case artToon:
+		base = pal.accent.Mix(white, .35)
 	}
-	return binInk{
-		back: ink.Alpha(.045), open: shade, openLine: ink.Alpha(.18), bodyFill: ink.Alpha(.028), bodyLine: ink.Alpha(.16),
-		rim: ink.Alpha(.32), rimFill: ink.Alpha(.26), lid: ink.Alpha(.21), lid2: ink.Alpha(.18), lidHi: ink.Alpha(.08),
-		handle: ink.Alpha(.34), wheel: ink.Alpha(.12), wheelLine: ink.Alpha(.12), hub: ink.Alpha(.28), detail: ink.Alpha(.07),
+	// on a light ground the heavy shading of tinted plastic reads as dirt (a murky body, a dark
+	// inside through it): light themes shade high-key
+	ik := binInk{glass: .4, ink: pal.ink, soft: !pal.dark}.shades(base)
+	ik.rubber = base.Mix(black, .78)
+	if !pal.dark {
+		ik.glass = .34
 	}
+	switch pal.art {
+	case artInk:
+		ik.line = true
+	case artBlueprint:
+		ik.line, ik.wash = true, .07
+	case artPhosphor:
+		ik.line, ik.wash, ik.glow = true, .05, true
+	case artHolo:
+		ik.glass, ik.edge, ik.edgeW, ik.glow = .16, pal.ink.Alpha(.85), 1, true
+	case artPlate:
+		ik.glass, ik.edge, ik.edgeW = .5, pal.ink, 1.3
+	case artTE:
+		ik.glass, ik.rim, ik.rubber = .72, pal.accent, ui.Hex("#2a2a2a")
+		ik.edge, ik.edgeW = ui.RGBA(0, 0, 0, .18), .8
+	case artToon:
+		ik.glass, ik.edge, ik.edgeW = .5, pal.ink, 1.8 // candy: its colour, not the ground's, through the shell
+		ik.rubber = pal.ink
+	}
+	return ik
+}
+
+// inkLine strokes linework w wide, glowing where the style glows.
+func (a *app) inkLine(p *ui.Painter, path *ui.Path, w float32, ik binInk) {
+	if ik.glow {
+		p.StrokePath(path, pen.w(w*4), ik.ink.Alpha(.16))
+	}
+	p.StrokePath(path, pen.w(w), ik.ink.Alpha(.9))
+}
+
+// edgeLine outlines a solid part, if the style inks them.
+func (a *app) edgeLine(p *ui.Painter, path *ui.Path, ik binInk) {
+	if ik.edge.A == 0 {
+		return
+	}
+	if ik.glow {
+		p.StrokePath(path, pen.w(ik.edgeW*4), ik.edge.Alpha(.18))
+	}
+	p.StrokePath(path, pen.w(ik.edgeW), ik.edge)
+}
+
+// rrXY is a rounded rectangle with elliptic corners, through the pen.
+func rrXY(x, y, w, h, rx, ry float32) *ui.Path {
+	var q penPath
+	kx, ky := kappa*rx, kappa*ry
+	q.MoveTo(x+rx, y).LineTo(x+w-rx, y).CubeTo(x+w-rx+kx, y, x+w, y+ry-ky, x+w, y+ry).
+		LineTo(x+w, y+h-ry).CubeTo(x+w, y+h-ry+ky, x+w-rx+kx, y+h, x+w-rx, y+h).
+		LineTo(x+rx, y+h).CubeTo(x+rx-kx, y+h, x, y+h-ry+ky, x, y+h-ry).
+		LineTo(x, y+ry).CubeTo(x, y+ry-ky, x+rx-kx, y, x+rx, y).Close()
+	return &q.Path
+}
+
+// band is the rolled front of a rim (or a lid) whose top is the ellipse-cornered box at (x, y),
+// w wide and 2·d deep: its near edge, thickened down by t.
+func band(x, y, w, r, d, t float32) *ui.Path {
+	var q penPath
+	kx, ky := kappa*r, kappa*d
+	q.MoveTo(x, y+d).LineTo(x, y+d+t).CubeTo(x, y+d+t+ky, x+r-kx, y+2*d+t, x+r, y+2*d+t).
+		LineTo(x+w-r, y+2*d+t).CubeTo(x+w-r+kx, y+2*d+t, x+w, y+d+t+ky, x+w, y+d+t).
+		LineTo(x+w, y+d).CubeTo(x+w, y+d+ky, x+w-r+kx, y+2*d, x+w-r, y+2*d).
+		LineTo(x+r, y+2*d).CubeTo(x+r-kx, y+2*d, x, y+d+ky, x, y+d).Close()
+	return &q.Path
+}
+
+// opening is the hole inside a rim's top, as the icon has it: inset by 3/8 of the corner
+// radius at the sides, and a little more at the near edge than at the far one.
+func opening(x, y, w, r, d float32) (ox, oy, ow, oh, orx, ory float32) {
+	ix, iy := r*.375, d*.26
+	return x + ix, y + iy, w - 2*ix, 2*d - iy*2.67, r - ix*.67, d - iy*1.33
+}
+
+// rimNear is the near half of a rim's top, between the opening and the rim's edge.
+func rimNear(x, y, w, r, d float32) *ui.Path {
+	ox, oy, ow, oh, orx, ory := opening(x, y, w, r, d)
+	var q penPath
+	kx, ky, kix, kiy := kappa*r, kappa*d, kappa*orx, kappa*ory
+	ib := oy + oh // the opening's near edge
+	q.MoveTo(x, y+d).CubeTo(x, y+d+ky, x+r-kx, y+2*d, x+r, y+2*d).
+		LineTo(x+w-r, y+2*d).CubeTo(x+w-r+kx, y+2*d, x+w, y+d+ky, x+w, y+d).
+		LineTo(ox+ow, ib-ory).CubeTo(ox+ow, ib-ory+kiy, ox+ow-orx+kix, ib, ox+ow-orx, ib).
+		LineTo(ox+orx, ib).CubeTo(ox+orx-kix, ib, ox, ib-ory+kiy, ox, ib-ory).Close()
+	return &q.Path
+}
+
+// tubBody is the body's outline: tapering sides, rounded bottom corners and a sagging floor.
+func tubBody(T *binTier, ox, oy float32) *ui.Path {
+	var q penPath
+	c, y1 := T.bc, oy+T.y1
+	q.MoveTo(ox+T.l0, oy+T.y0).LineTo(ox+T.sideL(T.y1-c), y1-c).
+		QuadTo(ox+T.l1+.12*c, y1, ox+T.l1+c, y1+.2*T.sag).QuadTo(ox+(T.l1+T.r1)/2, y1+T.sag, ox+T.r1-c, y1+.2*T.sag).
+		QuadTo(ox+T.r1-.12*c, y1, ox+T.sideR(T.y1-c), y1-c).LineTo(ox+T.r0, oy+T.y0).Close()
+	return &q.Path
+}
+
+// grooveLine is a groove's centre line, its caps' centres inset by half its width; lit is its
+// lower, lit side (the light comes from the top left).
+func grooveLine(T *binTier, g groove, ox, oy float32, lit bool) *ui.Path {
+	var q penPath
+	h := T.gw / 2
+	if g.flat {
+		y := g.at
+		x0 := T.sideL(y) + (T.sideR(y)-T.sideL(y))*g.a + h
+		x1 := T.sideL(y) + (T.sideR(y)-T.sideL(y))*g.b - h
+		if lit {
+			x0, x1, y = x0+h*.4, x1-h*.2, y+h*.45
+		}
+		q.MoveTo(ox+x0, oy+y).LineTo(ox+x1, oy+y)
+		return &q.Path
+	}
+	ya, yb := g.a+h, g.b-h
+	xa := T.sideL(ya) + (T.sideR(ya)-T.sideL(ya))*g.at
+	xb := T.sideL(yb) + (T.sideR(yb)-T.sideL(yb))*g.at
+	if lit {
+		xa, xb, ya = xa+h*.35, xb+h*.35, ya+h*.8
+	}
+	q.MoveTo(ox+xa, oy+ya).LineTo(ox+xb, oy+yb)
+	return &q.Path
+}
+
+// paintLid draws lid i, closed or turned up about its outer end by deg.
+func (a *app) paintLid(p *ui.Painter, T *binTier, i int, ox, oy, deg float32, lit float32, ik binInk) {
+	w := T.rw / float32(T.lids)
+	x, y := ox+T.rx+w*float32(i)-1.5, oy+T.ry-T.lidT
+	w += 3
+	r := min(T.rr, w/2)
+	px := x
+	if i == 1 {
+		px, deg = x+w, -deg
+	}
+	py := y + T.rd + T.lidT
+	ppx, ppy := pen.pt(px, py)
+	p.Transform(ui.Rotation(-deg), ppx, ppy, func() {
+		top, front := rrXY(x, y, w, 2*T.rd, r, T.rd), band(x, y, w, r, T.rd, T.lidT)
+		if ik.line {
+			p.FillPath(top, a.pal.bg)
+			p.FillPath(front, a.pal.bg)
+			a.inkLine(p, top, 1.2, ik)
+			a.inkLine(p, front, 1.2, ik)
+			return
+		}
+		ik := ik.rimInk()
+		defer func() {
+			a.edgeLine(p, top, ik)
+			a.edgeLine(p, front, ik)
+		}()
+		p.FillPathGradient(top, ui.LinearGradient{Angle: 180, From: ik.base.Mix(ik.light, .5+.3*lit), To: ik.light.Mix(ik.hi, .3*lit)})
+		p.FillPathGradient(front, ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{
+			{Color: ik.light, At: 0}, {Color: ik.base, At: .45}, {Color: ik.dark, At: 1}}})
+		p.FillPathGradient(front, ui.LinearGradient{Angle: 90, Stops: []ui.GradientStop{
+			{Color: ik.deep.Alpha(.3), At: 0}, {Color: ik.deep.Alpha(0), At: .12}, {Color: ui.RGBA(255, 255, 255, 0), At: .7},
+			{Color: ui.RGBA(255, 255, 255, .16), At: .86}, {Color: ui.RGBA(255, 255, 255, .05), At: 1}}})
+		// a grip on the front
+		gx := x + w*.5
+		if T.lids == 2 {
+			gx = x + w*float32(.7-.4*float32(i))
+		}
+		fillR(p, ui.Rect{X: gx - 6, Y: y + 2*T.rd + T.lidT*.35, W: 12, H: 2.4}, ik.dark.Alpha(.7), 1.2)
+	})
+}
+
+func (a *app) paintWheel(p *ui.Painter, x, y, r float32, ik binInk) {
+	var w penPath
+	w.Circle(x, y, r)
+	if ik.line {
+		p.FillPath(&w.Path, a.pal.bg)
+		a.inkLine(p, &w.Path, 1.2, ik)
+		return
+	}
+	p.FillPath(&w.Path, ik.rubber)
+	p.FillPath(&(&penPath{}).Circle(x-r*.08, y-r*.08, r*.86).Path, ik.rubber.Mix(ui.RGB(255, 255, 255), .1))
+	p.FillPath(&(&penPath{}).Circle(x, y, r*.42).Path, ik.dark)
+	p.FillPath(&(&penPath{}).Circle(x-r*.08, y-r*.1, r*.3).Path, ik.base)
+	a.edgeLine(p, &w.Path, ik)
 }
 
 // binXform runs fn in tier-local coordinates (origin at the tier's top-left), with the tier morph,
@@ -463,7 +760,7 @@ func (a *app) hoverBall(px, py float32) (pileEnt, bool) {
 	for i := len(f.ents) - 1; i >= 0; i-- {
 		e := f.ents[i]
 		b, ok := f.pile[e.key]
-		if !ok || f.inflight[e.key] > 0 || !f.dumpT0.IsZero() {
+		if !ok || f.inflight[e.key] > 0 || !f.dumpT0.IsZero() || f.truck != nil {
 			continue
 		}
 		x, y := f.toHero(ox+b.x, oy+b.y)
@@ -523,26 +820,43 @@ func (a *app) paintBinBack(p *ui.Painter, ents []pileEnt) {
 		if !a.pal.dark {
 			sh = .22
 		}
-		p.Transform(ui.Scaling(1, 9/w), f.heroTX, f.heroTY+.5, func() {
-			p.FillRadialGradient(ui.Rect{X: f.heroTX - w/2, Y: f.heroTY + .5 - w/2, W: w, H: w}, ui.RadialGradient{
+		sx := f.heroTX
+		p.Transform(ui.Scaling(1, 9/w), sx, f.heroTY+.5, func() {
+			p.FillRadialGradient(ui.Rect{X: sx - w/2, Y: f.heroTY + .5 - w/2, W: w, H: w}, ui.RadialGradient{
 				Radius: w / 2,
 				Stops:  []ui.GradientStop{{Color: ui.RGBA(0, 0, 0, sh*k), At: 0}, {Color: ui.RGBA(0, 0, 0, 0), At: 1}},
 			}, 0)
 		})
 	}
 	a.binXform(p, func(ox, oy float32) {
-		p.FillPath(svgPath(T.body, ox, oy), ik.back)
-		switch f.tier {
-		case 0:
-			ellipse(p, ox+27, oy+15, 21, 3.6, ik.open, ik.openLine, 1.6)
-		case 1:
-			ellipse(p, ox+35, oy+17, 30, 4.6, ik.open, ik.openLine, 1.6)
-		case 2:
-			p.FillPath(svgPath("M10 26H74L73 34H11Z", ox, oy), ui.RGBA(0, 0, 0, .25))
-		case 3:
-			p.FillPath(svgPath("M12 38H96L95 47H13Z", ox, oy), ui.RGBA(0, 0, 0, .25))
-		case 4:
-			p.FillPath(svgPath("M10 38H162L161 47H11Z", ox, oy), ui.RGBA(0, 0, 0, .25))
+		x, y, w, r, d := ox+T.rx, oy+T.ry, T.rw, T.rr, T.rd
+		ox2, oy2, ow, oh, orx, ory := opening(x, y, w, r, d)
+		if T.handle {
+			hc := ik.dark
+			if ik.line {
+				hc = ik.ink.Alpha(.6)
+			}
+			p.StrokePath((&penPath{}).MoveTo(ox+T.w*.24, oy+T.ry-T.lidT-1.5).LineTo(ox+T.w*.76, oy+T.ry-T.lidT-1.5).Cap(ui.RoundCap), pen.w(4.5), hc)
+		}
+		if ik.line {
+			if ik.wash > 0 {
+				p.FillPath(tubBody(T, ox, oy), ik.ink.Alpha(ik.wash))
+			}
+			a.inkLine(p, rrXY(x, y, w, 2*d+T.rt, r, d), 1.2, ik)
+			a.inkLine(p, rrXY(ox2, oy2, ow, oh, orx, ory), 1, ik)
+		} else {
+			// the inside: the back wall through the body, then the rim seen from above
+			inside := ui.LinearGradient{Angle: 180, From: ik.deep.Mix(ui.RGB(0, 0, 0), .4).Alpha(.7), To: ik.deep.Alpha(.45)}
+			if ik.soft { // a clean inside, shaded only under the rim
+				inside = ui.LinearGradient{Angle: 180, From: ik.deep.Alpha(.45), To: ik.dark.Alpha(.12)}
+			}
+			p.FillPathGradient(tubBody(T, ox, oy), inside)
+			rk := ik.rimInk()
+			p.FillPath(rrXY(x, y, w, 2*d+T.rt, r, d), rk.dark)
+			p.FillPathGradient(rrXY(x, y, w, 2*d, r, d), ui.LinearGradient{Angle: 180, From: rk.base, To: rk.base.Mix(rk.light, .5)})
+			p.FillPathGradient(rrXY(ox2, oy2, ow, oh, orx, ory), ui.LinearGradient{Angle: 180, From: rk.deep, To: rk.dark})
+			a.edgeLine(p, rrXY(x, y, w, 2*d+T.rt, r, d), rk)
+			a.edgeLine(p, rrXY(ox2, oy2, ow, oh, orx, ory), rk)
 		}
 		// the pile, clipped to the bin's inside
 		var clip penPath
@@ -562,12 +876,16 @@ func (a *app) paintBinBack(p *ui.Painter, ents []pileEnt) {
 			sw := 1 + .35*float32(easeStd(a.progress(f.hlT0, 0, 150*time.Millisecond)))
 			var hb *pileBall
 			for _, e := range ents {
-				if f.inflight[e.key] > 0 {
+				if f.inflight[e.key] > 0 || (f.truck != nil && f.truck.out[e.key]) {
 					continue
 				}
 				b, ok := f.pile[e.key]
 				if !ok {
 					continue
+				}
+				if f.truck != nil && e.key == f.truck.working {
+					// being deleted: it trembles, its turn is next
+					b.x += float32(math.Sin(float64(a.now.UnixMilli())*.9)) * .5
 				}
 				if e.key == hl && f.heroK > 0 {
 					hb = &b
@@ -621,7 +939,8 @@ func (a *app) paintBall(p *ui.Painter, x, y, r float32, c ui.Color, alpha float3
 	})
 }
 
-// paintBinFront draws the glass, rim and lid over the flying balls (in the window overlay).
+// paintBinFront draws the tinted body, its grooves, wheels, the rim's front and the lids over the
+// pile and the flying balls (in the window overlay).
 func (a *app) paintBinFront(p *ui.Painter) {
 	f := &a.binS
 	if f.right == 0 {
@@ -630,129 +949,74 @@ func (a *app) paintBinFront(p *ui.Painter) {
 	T := &binTiers[f.tier]
 	ik := a.binInk()
 	lid := a.lidAngle()
-	_, _, op := a.tierScale()
-	if op < 1 {
-		ik.bodyLine = ik.bodyLine.Alpha(op * .16)
-	}
+	// an open rim lights while things go in, and more while a drag hovers the bin
+	lit := min(1, lid/58)
 	if f.hot {
-		ik.bodyLine = a.pal.ink.Alpha(.33)
+		lit = 1
 	}
 	a.binXform(p, func(ox, oy float32) {
-		P := func(d string) *ui.Path { return svgPath(d, ox, oy) }
-		body := P(T.body)
-		p.FillPath(body, ik.bodyFill)
-		p.StrokePath(body, pen.w(1.2), ik.bodyLine)
-		rim := ik.rim
-		if T.lids == 0 && lid > 0 {
-			rim = a.pal.ink.Alpha(.45)
+		body := tubBody(T, ox, oy)
+		x, y, w, r, d := ox+T.rx, oy+T.ry, T.rw, T.rr, T.rd
+		// what stands behind the body's foot: the skid, then the wheels
+		if T.rail {
+			c := ik.rubber
+			if ik.line {
+				c = ik.ink.Alpha(.6)
+			}
+			fillR(p, ui.Rect{X: ox + T.l1 + 2, Y: oy + T.y1 - 1, W: T.r1 - T.l1 - 4, H: 5}, c, 2)
 		}
-		switch f.tier {
-		case 0:
-			halfEllipse(p, ox+27, oy+15, 21, 3.6, rim, 1.8)
-			p.StrokePath(P("M10.5 21L12.6 52").Cap(ui.RoundCap), pen.w(2.2), ik.detail)
-		case 1:
-			p.ClipPath(body, func() {
-				var m penPath
-				for x := float32(-70); x < 140; x += 7 {
-					m.MoveTo(ox+x, oy+17).LineTo(ox+x+60, oy+77).MoveTo(ox+x+60, oy+17).LineTo(ox+x, oy+77)
-				}
-				p.StrokePath(&m.Path, pen.w(.9), ik.detail)
-			})
-			p.StrokePath(P("M11.2 69H58.8"), pen.w(3), ik.detail)
-			halfEllipse(p, ox+35, oy+17, 30, 4.6, rim, 2.2)
-		case 2:
-			p.StrokePath(P("M17.7 28L22.7 92M27.4 28L30.4 93M37.1 28L38.1 93M46.9 28L45.9 93M56.6 28L53.6 93M66.3 28L61.3 92"), pen.w(1), ik.detail)
-			p.StrokePath(P("M12.5 34L16 88").Cap(ui.RoundCap), pen.w(2.5), ik.detail)
-			fillR(p, ui.Rect{X: ox + 5.5, Y: oy + 21, W: 73, H: 5}, ik.rimFill, 2.5)
-		case 3:
-			p.StrokePath(P("M24 42L27 116M38 42L39.5 117M54 42V117M70 42L68.5 117M84 42L81 116"), pen.w(1), ik.detail)
-			p.StrokePath(P("M13.5 60H94.5"), pen.w(5), ik.detail)
-			p.StrokePath(rrect(ox+42, oy+74, 24, 15, 2), pen.w(1), ik.detail)
-			p.StrokePath(P("M15 46L19.5 112").Cap(ui.RoundCap), pen.w(3), ik.detail)
-			fillR(p, ui.Rect{X: ox + 7, Y: oy + 33, W: 94, H: 5.5}, ik.rimFill, 2.5)
-			for _, cx := range []float32{25, 83} {
-				wheel(p, ox+cx, oy+126, 9, 3, ik)
-			}
-		case 4:
-			p.StrokePath(P("M12 58H160M14.5 79H157.5"), pen.w(1.2), ik.detail)
-			p.StrokePath(P("M50 40L52 100M86 40V100M122 40L120 100"), pen.w(1), ik.detail)
-			for _, x := range []float32{28, 110} {
-				fillR(p, ui.Rect{X: ox + x, Y: oy + 85, W: 34, H: 9}, ik.open, 1.5)
-				p.StrokePath(rrect(ox+x, oy+85, 34, 9, 1.5), pen.w(1), ik.detail)
-			}
-			p.StrokePath(P("M13 44L18 96").Cap(ui.RoundCap), pen.w(3), ik.detail)
-			fillR(p, ui.Rect{X: ox + 5, Y: oy + 33, W: 162, H: 5.5}, ik.rimFill, 2.5)
-			fillR(p, ui.Rect{X: ox + 27, Y: oy + 102, W: 7, H: 5}, ik.wheel, 0)
-			fillR(p, ui.Rect{X: ox + 138, Y: oy + 102, W: 7, H: 5}, ik.wheel, 0)
-			for _, cx := range []float32{30.5, 141.5} {
-				wheel(p, ox+cx, oy+110, 6.5, 0, ik)
-			}
+		for _, wh := range T.wheels {
+			a.paintWheel(p, ox+wh[0], oy+wh[1], wh[2], ik)
 		}
-		// lids
+		if ik.line {
+			a.inkLine(p, body, 1.2, ik)
+			for _, g := range T.grooves {
+				p.StrokePath(grooveLine(T, g, ox, oy, false).Cap(ui.RoundCap), pen.w(T.gw), ik.ink.Alpha(.15))
+			}
+			p.FillPath(band(x, y, w, r, d, T.rt), a.pal.bg)
+			a.inkLine(p, band(x, y, w, r, d, T.rt), 1.2, ik)
+		} else {
+			gl := ik.glass
+			p.FillPathGradient(body, ui.LinearGradient{Angle: 90, Stops: []ui.GradientStop{
+				// thick at the sides, where the eye looks through more plastic, clear in the middle
+				{Color: ik.dark.Alpha(gl * 1.6), At: 0}, {Color: ik.base.Alpha(gl * .9), At: .1}, {Color: ik.base.Alpha(gl * .3), At: .32},
+				{Color: ik.base.Alpha(gl * .3), At: .62}, {Color: ik.light.Alpha(gl), At: .86}, {Color: ik.base.Alpha(gl * 1.4), At: 1}}})
+			p.FillPathGradient(body, ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{
+				{Color: ik.deep.Alpha(.3), At: 0}, {Color: ik.deep.Alpha(0), At: .12}, {Color: ik.deep.Alpha(0), At: .75}, {Color: ik.deep.Alpha(.28), At: 1}}})
+			// the grooves, pressed in
+			for _, g := range T.grooves {
+				p.StrokePathGradient(grooveLine(T, g, ox, oy, false).Cap(ui.RoundCap), pen.w(T.gw), ui.LinearGradient{Angle: 180, From: ik.deep.Alpha(.55), To: ik.dark.Alpha(.45)})
+				p.StrokePath(grooveLine(T, g, ox, oy, true).Cap(ui.RoundCap), pen.w(T.gw*.57), ik.base.Alpha(.32))
+			}
+			p.StrokePath(body, pen.w(1), ik.light.Alpha(.45))
+			a.edgeLine(p, body, ik)
+			// the rim: its near top, then the rolled front
+			rk := ik.rimInk()
+			if T.lids == 0 {
+				p.FillPathGradient(rimNear(x, y, w, r, d), ui.LinearGradient{Angle: 180, From: rk.base, To: rk.light.Mix(rk.hi, lit*.5)})
+			}
+			front := band(x, y, w, r, d, T.rt)
+			p.FillPathGradient(front, ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{
+				{Color: rk.light.Mix(rk.hi, lit*.6), At: 0}, {Color: rk.base.Mix(rk.light, lit*.4), At: .45}, {Color: rk.dark, At: 1}}})
+			p.FillPathGradient(front, ui.LinearGradient{Angle: 90, Stops: []ui.GradientStop{
+				{Color: rk.deep.Alpha(.3), At: 0}, {Color: rk.deep.Alpha(0), At: .12}, {Color: ui.RGBA(255, 255, 255, 0), At: .7},
+				{Color: ui.RGBA(255, 255, 255, .16), At: .86}, {Color: ui.RGBA(255, 255, 255, .05), At: 1}}})
+			a.edgeLine(p, front, rk)
+		}
+		if T.pedal {
+			c := ik.dark
+			if ik.line {
+				c = ik.ink.Alpha(.6)
+			}
+			fillR(p, ui.Rect{X: ox + T.w*.36, Y: oy + T.y1 - 1, W: T.w * .28, H: 4.5}, c, 2)
+		}
 		for i := 0; i < T.lids; i++ {
-			pv := T.pivots[i]
-			deg := -lid
-			if i == 1 {
-				deg = lid
-			}
-			px, py := pen.pt(ox+pv[0], oy+pv[1])
-			p.Transform(ui.Rotation(deg), px, py, func() {
-				switch f.tier {
-				case 2:
-					var h penPath
-					h.MoveTo(ox+33, oy+14.5).LineTo(ox+33, oy+11).QuadTo(ox+33, oy+8, ox+36, oy+8).LineTo(ox+48, oy+8).
-						QuadTo(ox+51, oy+8, ox+51, oy+11).LineTo(ox+51, oy+14.5)
-					p.StrokePath(&h.Path, pen.w(2.6), ik.handle)
-					fillR(p, ui.Rect{X: ox + 4, Y: oy + 14, W: 76, H: 7.5}, ik.lid, 3.5)
-					fillR(p, ui.Rect{X: ox + 4, Y: oy + 14, W: 76, H: 2.5}, ik.lidHi, 1.25)
-				case 3:
-					fillR(p, ui.Rect{X: ox + 42, Y: oy + 19.5, W: 24, H: 4.5}, ik.handle, 2.2)
-					fillR(p, ui.Rect{X: ox + 4, Y: oy + 24, W: 100, H: 10}, ik.lid, 3)
-					fillR(p, ui.Rect{X: ox + 4, Y: oy + 24, W: 100, H: 3}, ik.lidHi, 1.5)
-				case 4:
-					x, c := float32(4), ik.lid
-					if i == 1 {
-						x, c = 86, ik.lid2
-					}
-					fillR(p, ui.Rect{X: ox + x, Y: oy + 25, W: 82, H: 9}, c, 2.5)
-					fillR(p, ui.Rect{X: ox + x, Y: oy + 25, W: 82, H: 2.6}, ik.lidHi, 1.3)
-				}
-			})
+			a.paintLid(p, T, i, ox, oy, lid, lit, ik)
 		}
 	})
 }
 
-func wheel(p *ui.Painter, x, y, r, hub float32, ik binInk) {
-	var w penPath
-	w.Circle(x, y, r)
-	p.FillPath(&w.Path, ik.wheel)
-	p.StrokePath(&w.Path, pen.w(1), ik.wheelLine)
-	if hub > 0 {
-		p.FillPath(&(&penPath{}).Circle(x, y, hub).Path, ik.hub)
-	}
-}
-
 const kappa = .5523
-
-func ellipse(p *ui.Painter, cx, cy, rx, ry float32, fill, line ui.Color, w float32) {
-	var e penPath
-	e.MoveTo(cx-rx, cy).
-		CubeTo(cx-rx, cy-kappa*ry, cx-kappa*rx, cy-ry, cx, cy-ry).
-		CubeTo(cx+kappa*rx, cy-ry, cx+rx, cy-kappa*ry, cx+rx, cy).
-		CubeTo(cx+rx, cy+kappa*ry, cx+kappa*rx, cy+ry, cx, cy+ry).
-		CubeTo(cx-kappa*rx, cy+ry, cx-rx, cy+kappa*ry, cx-rx, cy).Close()
-	p.FillPath(&e.Path, fill)
-	p.StrokePath(&e.Path, pen.w(w), line)
-}
-
-// halfEllipse strokes the front (lower) half of a rim.
-func halfEllipse(p *ui.Painter, cx, cy, rx, ry float32, c ui.Color, w float32) {
-	var e penPath
-	e.MoveTo(cx-rx, cy).
-		CubeTo(cx-rx, cy+kappa*ry, cx-kappa*rx, cy+ry, cx, cy+ry).
-		CubeTo(cx+kappa*rx, cy+ry, cx+rx, cy+kappa*ry, cx+rx, cy)
-	p.StrokePath(e.Path.Cap(ui.RoundCap), pen.w(w), c)
-}
 
 func rrect(x, y, w, h, r float32) *ui.Path {
 	var p penPath

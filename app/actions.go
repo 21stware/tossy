@@ -71,10 +71,11 @@ func (a *app) shakeX(n int32) float32 {
 }
 
 // ------------------------------------------------------------------------------------------
-// drag a row onto the bin
+// drag a row or a sector onto the bin
 
 type dragState struct {
 	node   int32
+	chart  bool // picked up from the chart, not a list row
 	press  bool
 	acc    float32 // distance moved, to tell a drag from a click
 	on     bool
@@ -82,7 +83,7 @@ type dragState struct {
 	d      float32 // ball diameter
 	c      ui.Color
 	hot    bool
-	home   ui.Rect // the row, for the ball's way back
+	home   ui.Rect // the row, or the sector's middle, for the ball's way back
 	back   time.Time
 	bx, by float32 // where the way back starts
 }
@@ -95,14 +96,48 @@ type dropSrc struct {
 	set  bool
 }
 
-func (a *app) rowDrag(r ui.Element, n int32) {
+func (a *app) rowDrag(r ui.Element, n int32) { a.dragNode(r, n, false, r.Bounds()) }
+
+// chartDrag picks up the sector the press began on. It reports whether a drag let go this
+// frame, so the release does not also count as a click on the chart.
+func (a *app) chartDrag(chart ui.Element) (ended bool) {
 	d := &a.drag
+	if d.press && !d.chart {
+		return false // a row's drag
+	}
+	n := d.node
+	if !d.press {
+		dx, dy, held := chart.Dragged()
+		x, y, _ := chart.PointerPosition()
+		if !held || (dx == 0 && dy == 0) {
+			return false
+		}
+		b := chart.Bounds()
+		i := a.sun.hit(b.X+x-dx, b.Y+y-dy)
+		if i < 0 || i >= len(a.sun.arcs) || a.sun.arcs[i].node == scan.None {
+			return false
+		}
+		n = a.sun.arcs[i].node
+	}
+	moved := d.press && d.acc > 6
+	hx, hy, _ := a.arcPoint(n)
+	a.dragNode(chart, n, true, ui.Rect{X: hx, Y: hy})
+	return moved && !d.press
+}
+
+// dragNode carries n as a ball under the pointer while el is pressed, and throws it when it is
+// let go over the bin.
+func (a *app) dragNode(r ui.Element, n int32, chart bool, home ui.Rect) {
+	d := &a.drag
+	if d.press && d.chart != chart {
+		return
+	}
 	dx, dy, held := r.Dragged()
 	if held && a.anal == nil {
 		if !d.press || d.node != n {
 			px, py, _ := r.PointerPosition()
 			b := r.Bounds()
-			*d = dragState{node: n, press: true, x: b.X + px - dx, y: b.Y + py - dy, home: b}
+			*d = dragState{node: n, chart: chart, press: true, x: b.X + px - dx, y: b.Y + py - dy, home: home}
 		}
 		d.x += dx
 		d.y += dy
@@ -132,6 +167,9 @@ func (a *app) rowDrag(r ui.Element, n int32) {
 			a.drop = dropSrc{n, d.x, d.y, d.c, true}
 			*d = dragState{}
 			a.selected = n
+			if chart {
+				a.throwNode = scan.None // the ball flies on, not the list row
+			}
 			a.requestTrash(n)
 			return
 		}
@@ -194,6 +232,7 @@ func (a *app) dock(c *ui.Context) {
 	total := len(ents)
 	n, size := a.landed(ents)
 	tier := &binTiers[f.tier] // not T: the dock's text calls the translator T below
+	ds := dockScale(f.tier)
 	// the bin rests in the window's bottom-right corner, at the foot of the right column; the
 	// trash scene grows it into a hero on the trash panel's stage, in the same column
 	inT := a.sceneOn() == sceneTrash
@@ -208,10 +247,10 @@ func (a *app) dock(c *ui.Context) {
 		if th == 0 {
 			th = 50
 		}
-		f.heroS = max(dockS, min(heroBinH(H, a.sz)/tier.h, fw*.55/tier.w, 3.4))
+		f.heroS = max(ds, min(heroBinH(H, a.sz)/tier.h, fw*.55/tier.w, 3.4))
 		f.heroTX, f.heroTY = W-fw/2, H-2-th-stageBottom
 	} else if f.heroS == 0 {
-		f.heroS, f.heroTX, f.heroTY = dockS, f.right-tier.w/2, f.bottom
+		f.heroS, f.heroTX, f.heroTY = ds, f.right-tier.w/2, f.bottom
 	}
 	hw := tier.w * f.heroS
 	f.heroW = hw + 56
@@ -220,7 +259,7 @@ func (a *app) dock(c *ui.Context) {
 	rx := dockR - 14 + (W-f.heroTX-(hw+28)/2-(dockR-14))*k
 	by := dockB - 10 + (H-f.heroTY-10-(dockB-10))*k
 	row := ui.Row(c.Key("dock")).Absolute().Right(rx).Bottom(by).ZIndex(3).Padding(12, 14, 10, 14).Gap(18).AlignItems(ui.End).
-		Height(nat + (tier.h*f.heroS+22-nat)*k).MinWidth(tier.w*dockS + 28 + (hw-tier.w*dockS)*k)
+		Height(nat + (tier.h*f.heroS+22-nat)*k).MinWidth(tier.w*ds + 28 + (hw-tier.w*ds)*k)
 	// hover a ball of the hero bin: its row lights and scrolls into view, its arc lights
 	prev := f.hov
 	f.hov = ""
@@ -277,8 +316,8 @@ func (a *app) dock(c *ui.Context) {
 				ui.Text(c, sub).FontSize(14).TextColor(pal.t3).SingleLine().Ellipsis("…")
 			})
 		})
-		bin := ui.Box(c.Key("bin")).Size(tier.w*dockS, tier.h*dockS).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
-			a.now = a.clock(p.Now())
+		bin := ui.Box(c.Key("bin")).Size(tier.w*ds, tier.h*ds).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
+			a.now = p.Now()
 			// the slot as the tier draws it, at scale 1: hero() zooms it about its bottom centre
 			f.right, f.bottom = r.X+r.W/2+tier.w/2, r.Y+r.H
 			a.paintBinBack(p, f.ents)
@@ -336,8 +375,11 @@ func (a *app) dockNat() float32 {
 	if th == 0 {
 		th = 74
 	}
-	return max(th, binTiers[a.binS.tier].h*dockS) + 22
+	return max(th, binTiers[a.binS.tier].h*dockScale(a.binS.tier)) + 22
 }
+
+// dockGap is the room between the list's last row and the dock.
+const dockGap = 22
 
 // goScene switches the right panel; the new one staggers in.
 func (a *app) goScene(s int) {
@@ -359,7 +401,6 @@ func (a *app) goScene(s int) {
 // the very frame of the press) and lets the new panel's parts stagger in.
 func (a *app) switchScene(apply func()) {
 	a.sceneNext++
-	a.inkRefresh(true)
 	apply()
 	a.panelT0, a.sceneT0 = a.now, time.Time{}
 	a.frame = true
@@ -532,15 +573,30 @@ func (a *app) emptyTrash(ids []string) {
 	}
 	var size int64
 	keys := map[string]bool{}
-	for _, it := range a.bin.List() {
+	all := a.bin.List()
+	var todo []trash.Item
+	for _, it := range all {
 		if ids == nil || want[it.ID] {
 			size += it.Size
 			keys[it.Orig] = true
+			todo = append(todo, it)
 		}
 	}
 	a.emptying = true
-	wait := a.startDump(keys)
 	start, bin := time.Now(), a.bin
+	// a truck takes it away, as fast as the files actually go (see truck.go)
+	if r := a.startTruck(keys, size); r != nil {
+		go func() {
+			if r.preview { // TOSSY_PREVIEW: the show, nothing deleted (see dev.go)
+				r.simulate(todo, bin.List())
+				return
+			}
+			freed, err := bin.EmptyWith(ids, r.step)
+			r.finish(freed, bin.List(), err)
+		}()
+		return
+	}
+	wait := a.startDump(keys)
 	go func() {
 		freed, err := bin.Empty(ids)
 		left := bin.List()

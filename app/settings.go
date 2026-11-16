@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -92,34 +91,14 @@ func (a *app) excludes() []string {
 func (a *app) motion() bool { return a.pal.motion && !a.set.ReduceMotion }
 
 // trashFX says whether throwing into and emptying the bin animate. E-ink keeps them, as the
-// one motion it has: stepped like a panel's partial refreshes (see inkStep).
+// one motion it has.
 func (a *app) trashFX() bool { return (a.pal.motion || a.ink()) && !a.set.ReduceMotion }
 
-// ink says whether the e-ink style is animating the bin in steps.
+// ink says whether the e-ink style is animating the bin.
 func (a *app) ink() bool { return a.pal.art == artInk && !a.set.ReduceMotion }
 
-// inkStep is how long an e-ink frame stands: the bin's animations jump from one to the next, as
-// a panel's partial refreshes do, with the last one left as a ghost.
-const inkStep = 110 * time.Millisecond
-
-// clock is the time animations read: under e-ink, the start of the current step.
-func (a *app) clock(t time.Time) time.Time {
-	if a.pal.art == artInk && !t.IsZero() {
-		return t.Truncate(inkStep)
-	}
-	return t
-}
-
-// tick asks for the next frame of a running animation: at the display's rate, or under e-ink
-// only when the next step is due.
-func (a *app) tick(p *ui.Painter) {
-	if a.ink() {
-		now := p.Now()
-		p.After(now.Truncate(inkStep).Add(inkStep).Sub(now))
-		return
-	}
-	p.AnimationFrame()
-}
+// tick asks for the next frame of a running animation, at the display's rate.
+func (a *app) tick(p *ui.Painter) { p.AnimationFrame() }
 
 // defaultRoot is where a fresh launch scans.
 func (a *app) defaultRoot() string {
@@ -431,7 +410,7 @@ func (a *app) setAppearance(c *ui.Context) {
 			ui.Text(c, T(cur.desc)).FontSize(12.5).TextColor(a.pal.t3).Shrink(1).MinWidth(0)
 		})
 	})
-	a.option(c, "rm", T("减少动态效果"), T("关闭缩放过渡、开场动画与飞入废纸篓动画（墨水屏只保留分步刷新的废纸篓动画）"), func() {
+	a.option(c, "rm", T("减少动态效果"), T("关闭缩放过渡、开场动画与飞入废纸篓动画（墨水屏只保留废纸篓动画）"), func() {
 		ui.Switch(c.Key("sw"), &a.set.ReduceMotion)
 	})
 }

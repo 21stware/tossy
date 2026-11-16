@@ -305,16 +305,6 @@ func (a *app) paintFly(p *ui.Painter) {
 			return
 		}
 		x, y, sc, op, c := at(t)
-		if ink { // the panel has not quite let go of the last step: a faint ghost, then a fainter one
-			for i := 2; i >= 1; i-- {
-				gt := t - float32(i)*float32(inkStep)/float32(b.dur)
-				if gt <= 0 {
-					continue
-				}
-				gx, gy, gs, _, gc := at(gt)
-				a.paintBall(p, gx, gy, b.d/2*gs, gc, .3/float32(i))
-			}
-		}
 		if b.solo && !ink && t > f0 && t < f1 { // a short fading trail along the arc
 			for i := 1; i <= 4; i++ {
 				u := (t - f0 - float32(i)*.025) / (f1 - f0)
@@ -327,6 +317,7 @@ func (a *app) paintFly(p *ui.Painter) {
 		a.paintBall(p, x, y, b.d/2*sc, c, op)
 	}
 	f.balls = keepB
+	a.paintTruck(p)
 	a.paintBinFront(p)
 	a.paintEmptyDone(p)
 	a.paintBallTip(p)

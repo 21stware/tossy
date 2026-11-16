@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="252 420 520 520" width="1024" height="1024" role="img" aria-label="Tossy bin">
+  <!-- The bin of icon.svg on its own: the same shapes and gradients, without the icon's tile, its floor shadow or its drop shadow; transparent around it. -->
+  <defs>
+    <clipPath id="inBody"><path d="M297 530 L334 840.5 Q342.3 910 412 912 Q512 920 612 912 Q681.7 910 690 840.5 L727 530 Z"/></clipPath>
+    <clipPath id="inLip"><path d="M277 486 V520 A64 46 0 0 0 341 566 H683 A64 46 0 0 0 747 520 V486 A64 46 0 0 1 683 532 H341 A64 46 0 0 1 277 486 Z"/></clipPath>
+    <clipPath id="inOpening"><rect x="301" y="452" width="422" height="60" rx="48" ry="30"/></clipPath>
+
+    <!-- 桶身：左暗右亮，上下略收暗 -->
+    <linearGradient id="bodyH" gradientUnits="userSpaceOnUse" x1="297" y1="0" x2="727" y2="0">
+      <stop offset="0" stop-color="#37A379"/>
+      <stop offset="0.14" stop-color="#5CC99B"/>
+      <stop offset="0.6" stop-color="#5CC99B"/>
+      <stop offset="0.86" stop-color="#9BEBC6"/>
+      <stop offset="1" stop-color="#5CC99B"/>
+    </linearGradient>
+    <linearGradient id="bodyV" gradientUnits="userSpaceOnUse" x1="0" y1="540" x2="0" y2="916">
+      <stop offset="0" stop-color="#14523B" stop-opacity="0"/>
+      <stop offset="0.7" stop-color="#14523B" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#14523B" stop-opacity="0.34"/>
+    </linearGradient>
+    <linearGradient id="lipV" gradientUnits="userSpaceOnUse" x1="0" y1="500" x2="0" y2="566">
+      <stop offset="0" stop-color="#9BEBC6"/>
+      <stop offset="0.45" stop-color="#5CC99B"/>
+      <stop offset="1" stop-color="#37A379"/>
+    </linearGradient>
+    <linearGradient id="lipH" gradientUnits="userSpaceOnUse" x1="277" y1="0" x2="747" y2="0">
+      <stop offset="0" stop-color="#14523B" stop-opacity="0.28"/>
+      <stop offset="0.12" stop-color="#14523B" stop-opacity="0"/>
+      <stop offset="0.7" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.86" stop-color="#FFFFFF" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.05"/>
+    </linearGradient>
+    <linearGradient id="topV" gradientUnits="userSpaceOnUse" x1="0" y1="440" x2="0" y2="532">
+      <stop offset="0" stop-color="#5CC99B"/>
+      <stop offset="1" stop-color="#7EDBB3"/>
+    </linearGradient>
+    <linearGradient id="edgeFade" gradientUnits="userSpaceOnUse" x1="277" y1="0" x2="747" y2="0">
+      <stop offset="0.04" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.22" stop-color="#FFFFFF" stop-opacity="0.5"/>
+      <stop offset="0.8" stop-color="#FFFFFF" stop-opacity="0.6"/>
+      <stop offset="0.96" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="inner" gradientUnits="userSpaceOnUse" x1="0" y1="452" x2="0" y2="512">
+      <stop offset="0" stop-color="#37A379"/>
+      <stop offset="1" stop-color="#1F7C5A"/>
+    </linearGradient>
+    <linearGradient id="slotDark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1F7C5A"/><stop offset="1" stop-color="#37A379"/>
+    </linearGradient>
+    <linearGradient id="slotLit" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#37A379"/><stop offset="1" stop-color="#5CC99B"/>
+    </linearGradient>
+    <linearGradient id="slotEdge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0.35" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.55"/>
+    </linearGradient>
+
+    <filter color-interpolation-filters="sRGB" id="blur3" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="3"/></filter>
+    <filter color-interpolation-filters="sRGB" id="blur5" x="-50%" y="-20%" width="200%" height="140%"><feGaussianBlur stdDeviation="5"/></filter>
+    <filter color-interpolation-filters="sRGB" id="blur12" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="12"/></filter>
+    <filter color-interpolation-filters="sRGB" id="blur18" x="-80%" y="-40%" width="260%" height="180%"><feGaussianBlur stdDeviation="18"/></filter>
+  </defs>
+
+  <g>
+    <!-- 桶口后半：上沿 + 内壁 -->
+    <g>
+      <path d="M297 530 L334 840.5 Q342.3 910 412 912 Q512 920 612 912 Q681.7 910 690 840.5 L727 530 Z" fill="#5CC99B"/>
+      <rect x="277" y="440" width="470" height="126" rx="64" ry="46" fill="#5CC99B"/>
+    </g>
+    <rect x="277" y="440" width="470" height="92" rx="64" ry="46" fill="url(#topV)"/>
+    <rect x="301" y="452" width="422" height="60" rx="48" ry="30" fill="url(#inner)"/>
+    <g clip-path="url(#inOpening)">
+      <rect x="301" y="440" width="422" height="26" rx="13" fill="#14523B" opacity="0.45" filter="url(#blur5)"/>
+    </g>
+
+    <!-- 桶身 -->
+    <path d="M297 530 L334 840.5 Q342.3 910 412 912 Q512 920 612 912 Q681.7 910 690 840.5 L727 530 Z" fill="url(#bodyH)"/>
+    <g clip-path="url(#inBody)">
+      <path d="M297 530 L334 840.5 Q342.3 910 412 912 Q512 920 612 912 Q681.7 910 690 840.5 L727 530 Z" fill="url(#bodyV)"/>
+      <rect x="277" y="500" width="470" height="92" rx="64" ry="46" fill="#14523B" opacity="0.5" filter="url(#blur12)"/>
+      <ellipse cx="680" cy="730" rx="20" ry="150" transform="rotate(6 680 730)" fill="#FFFFFF" opacity="0.3" filter="url(#blur18)"/>
+    </g>
+    <!-- 三道凹槽 -->
+    <g>
+      <g transform="rotate(2.6 432 745)">
+        <clipPath id="slot0"><rect x="411" y="640" width="42" height="210" rx="21"/></clipPath>
+        <rect x="411" y="640" width="42" height="210" rx="21" fill="url(#slotDark)"/>
+        <g clip-path="url(#slot0)"><rect x="411" y="640" width="42" height="210" rx="21" transform="translate(8 11)" fill="url(#slotLit)" filter="url(#blur5)"/></g>
+        <rect x="411" y="640" width="42" height="210" rx="21" fill="none" stroke="url(#slotEdge)" stroke-width="3.5"/>
+      </g>
+      <g transform="rotate(0 512 745)">
+        <clipPath id="slot1"><rect x="491" y="640" width="42" height="210" rx="21"/></clipPath>
+        <rect x="491" y="640" width="42" height="210" rx="21" fill="url(#slotDark)"/>
+        <g clip-path="url(#slot1)"><rect x="491" y="640" width="42" height="210" rx="21" transform="translate(8 11)" fill="url(#slotLit)" filter="url(#blur5)"/></g>
+        <rect x="491" y="640" width="42" height="210" rx="21" fill="none" stroke="url(#slotEdge)" stroke-width="3.5"/>
+      </g>
+      <g transform="rotate(-2.6 592 745)">
+        <clipPath id="slot2"><rect x="571" y="640" width="42" height="210" rx="21"/></clipPath>
+        <rect x="571" y="640" width="42" height="210" rx="21" fill="url(#slotDark)"/>
+        <g clip-path="url(#slot2)"><rect x="571" y="640" width="42" height="210" rx="21" transform="translate(8 11)" fill="url(#slotLit)" filter="url(#blur5)"/></g>
+        <rect x="571" y="640" width="42" height="210" rx="21" fill="none" stroke="url(#slotEdge)" stroke-width="3.5"/>
+      </g>
+    </g>
+
+    <!-- 桶口前半：卷边 -->
+    <path d="M277 486 V520 A64 46 0 0 0 341 566 H683 A64 46 0 0 0 747 520 V486 A64 46 0 0 1 683 532 H341 A64 46 0 0 1 277 486 Z" fill="url(#lipV)"/>
+    <path d="M277 486 V520 A64 46 0 0 0 341 566 H683 A64 46 0 0 0 747 520 V486 A64 46 0 0 1 683 532 H341 A64 46 0 0 1 277 486 Z" fill="url(#lipH)"/>
+    <path d="M277 486 A64 46 0 0 0 341 532 H683 A64 46 0 0 0 747 486 L723 482 A48 30 0 0 1 675 512 H349 A48 30 0 0 1 301 482 Z" fill="url(#topV)"/>
+    <g clip-path="url(#inLip)">
+      <path d="M277 486 A64 46 0 0 0 341 532 H683 A64 46 0 0 0 747 486" transform="translate(0 30)" fill="none" stroke="#14523B" stroke-width="16" opacity="0.28" filter="url(#blur5)"/>
+    </g>
+    <path d="M277 486 A64 46 0 0 0 341 532 H683 A64 46 0 0 0 747 486" transform="translate(0 3)" fill="none" stroke="url(#edgeFade)" stroke-width="7" filter="url(#blur3)"/>
+    <path d="M349 512 H675" fill="none" stroke="#14523B" stroke-width="3" opacity="0.18" filter="url(#blur3)"/>
+  </g>
+</svg>
