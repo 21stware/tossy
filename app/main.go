@@ -51,6 +51,7 @@ func (a *app) applyTheme(c *ui.Context) {
 		a.uiTheme = a.pal.theme()
 		a.lastPal = a.pal
 	}
+	a.syncDockIcon(a.pal)
 	c.SetTheme(a.uiTheme) // per frame
 }
 
