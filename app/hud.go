@@ -287,16 +287,8 @@ func (a *app) paintScanning(p *ui.Painter, r ui.Rect) {
 	}
 	now := p.Now()
 	ang := float64(now.Sub(a.scanStart)) / float64(time.Second) * tau / 2.4
-	// sweep: a fan of thin wedges fading behind the beam
-	for i := 0; i < 24; i++ {
-		b := ang - float64(i)*.035
-		var w ui.Path
-		w.MoveTo(cx, cy)
-		w.LineTo(cx+float32(math.Cos(b))*rad, cy+float32(math.Sin(b))*rad)
-		arcTo(&w, cx, cy, rad, b, b-.036)
-		w.Close()
-		p.FillPath(&w, ink.Alpha(.16*(1-float32(i)/24)))
-	}
+	// sweep: fading behind the beam
+	a.radarTrail(p, cx, cy, rad, ang, 24, .035, .036, ink.Alpha(.16))
 	a.paintScanWire(p, cx, cy, rad, ang, ink)
 	pr := a.prog
 	centerText(p, cx, cy-14, fmtSize(pr.Bytes.Load()), 26, 600, pal.text, "")
