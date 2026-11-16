@@ -617,6 +617,9 @@ func (a *app) emptied(freed, planned int64, left []trash.Item, err error) {
 	for id := range a.trashed {
 		if !still[id] {
 			delete(a.trashed, id)
+			if a.dev != nil {
+				delete(a.dev.trashed, id)
+			}
 		}
 	}
 	a.freedTotal += freed

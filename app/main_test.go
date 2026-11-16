@@ -57,11 +57,14 @@ func fixture(t testing.TB) string {
 	return root
 }
 
-func loaded(t testing.TB) *app {
+func loaded(t testing.TB) *app { return loadedAt(t, fixture(t)) }
+
+// loadedAt is an app with root scanned.
+func loadedAt(t testing.TB, root string) *app {
 	t.Setenv("TOSSY_STATE", t.TempDir())
 	a := newApp()
 	done := make(chan struct{})
-	a.startScan(fixture(t))
+	a.startScan(root)
 	go func() {
 		for a.scanning {
 			time.Sleep(10 * time.Millisecond)

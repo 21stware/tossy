@@ -287,8 +287,8 @@ func (a *app) capacity() int64 {
 	if a.disk.ok && a.disk.total > 0 {
 		return a.disk.total
 	}
-	if a.t != nil {
-		return a.t.Nodes[0].Size * 6 / 5
+	if a.base != nil {
+		return a.base.Nodes[0].Size * 6 / 5
 	}
 	return 1
 }

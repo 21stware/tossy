@@ -41,6 +41,8 @@ type ruleSet struct {
 	suffixes []suffixRule // names matched by their end ("*.egg-info")
 	prefixes []suffixRule // and by their start ("cmake-build-*")
 	all      []*Rule
+	personal *Rule    // the personal data rule (see namesake)
+	projects []string // every file a rule takes as proof of a project
 }
 
 type suffixRule struct {
@@ -174,13 +176,32 @@ var builtin = func() *ruleSet {
 
 	// ---------- risky: personal data
 	add("personal", "documents|desktop|pictures|music|mail|messages|.ssh|.gnupg|.git|photos library.photoslibrary|mobile documents|icloud drive", Risky, "个人数据，删除后无法重新生成", "个人数据", "", "")
+	rs.personal = rs.all[len(rs.all)-1]
 
 	// ---------- protected
 	add("os-top", "system|library|private|usr|bin|sbin|etc|boot|lib|lib64|windows|var|cores", Protected, "操作系统组件，删除会导致系统无法运行", "系统", `^(c:)?/[^/]+$`, "")
 	add("win-core", "winsxs|system32|syswow64", Protected, "Windows 组件存储，删除会导致系统无法运行", "系统", "", "")
 	add("swap", "pagefile.sys|swapfile.sys|swapfile|sleepimage|swapfile0|swapfile1", Protected, "虚拟内存 / 交换文件，由系统管理", "系统", "", "")
+	seen := map[string]bool{}
+	for _, r := range rs.all {
+		for _, m := range r.Markers {
+			if !seen[m] {
+				seen[m] = true
+				rs.projects = append(rs.projects, m)
+			}
+		}
+	}
 	return rs
 }()
+
+// Some of the personal data rule's names are everyday words, and a project is easily called
+// one: the desktop app of a monorepo, a mail service, a music player. commonWords are those
+// names; personalPlace is where a folder of such a name is the user's own whatever it holds:
+// the standard folders of a home directory (OneDrive moves them one level down on Windows).
+var (
+	commonWords   = map[string]bool{"documents": true, "desktop": true, "pictures": true, "music": true, "mail": true, "messages": true}
+	personalPlace = regexp.MustCompile(`^(/users|/home|c:/users)/[^/]+/((onedrive[^/]*/)?(documents|desktop|pictures|music)|library/(mail|messages))$`)
+)
 
 var installerExt = map[string]bool{"dmg": true, "pkg": true, "xip": true, "iso": true, "exe": true, "msi": true, "deb": true, "rpm": true, "appimage": true, "run": true}
 

@@ -157,6 +157,30 @@ func TestReadmeShots(t *testing.T) {
 	tt.Advance(time.Second)
 	tt.Frame()
 
+	// 4b. the developer's view: the same scan by kind, the list in focus, a kind under the pointer
+	a.setDev(true)
+	tt.Advance(2 * time.Second)
+	tt.Frame()
+	a.pf = pfList
+	for i := 0; i < 8; i++ { // the column widens on a spring
+		tt.Advance(250 * time.Millisecond)
+		tt.Frame()
+	}
+	for k := range a.sun.arcs {
+		if a.sun.arcs[k].ring == 2 && a.sun.arcs[k].node >= 0 {
+			x, y := a.arcPointOf(&a.sun.arcs[k])
+			tt.Move(x, y)
+			break
+		}
+	}
+	tt.Frame()
+	save(tt, "developer")
+	tt.Move(5, 5)
+	a.pf = pfNone
+	a.setDev(false)
+	tt.Advance(2 * time.Second)
+	tt.Frame()
+
 	// 5. Auto Clean: the analysis sweep
 	if err := tt.Click(T("自动清理")); err != nil {
 		t.Fatal(err, tt.Texts())

@@ -52,7 +52,7 @@ func (a *app) browsePanel(c *ui.Context) {
 				rows := a.children()
 				a.list.Key = func(i int) any { return rows[i] }
 				ui.List(c.Key("list"), &a.list, len(rows), func(i int) { a.row(c, rows[i], i) }).Grow(1).Shrink(1).Padding(2, 0, 6, 0).Children(func() {
-					if len(rows) == 0 {
+					if len(rows) == 0 && !a.virtual(a.focus) { // the developer's view says so itself (kindPanel)
 						ui.Text(c, T("此文件夹为空")).TextColor(pal.t3).FontSize(12.5).Padding(24).AlignSelf(ui.Center)
 					}
 				})
@@ -151,7 +151,7 @@ func (a *app) row(c *ui.Context, n int32, i int) {
 		if nd.Flags&scan.FlagCloud != 0 {
 			col = pal.t3
 		}
-		ui.Text(c, a.t.Name(n)).TextColor(col).SingleLine().Ellipsis("…").Grow(1).Shrink(1)
+		ui.Text(c, a.name(n)).TextColor(col).SingleLine().Ellipsis("…").Grow(1).Shrink(1)
 		if dir && !slim {
 			if k := a.ev.Git(n); k == gitrepo.Repo || k == gitrepo.Worktree {
 				ui.Text(c, gitKindLabel(k)).FontSize(10.5).Font(pal.mono).TextColor(pal.t3).Padding(1, 5).Radius(4).Background(pal.hov).SingleLine().Shrink(0)
@@ -174,6 +174,10 @@ func (a *app) row(c *ui.Context, n int32, i int) {
 		ui.Text(c, fmtSize(nd.Size)).FontSize(12).Font(pal.mono).Width(sw).TextAlign(ui.End).TextColor(pal.t2).SingleLine().Shrink(0)
 		if slim && !hot && !sel {
 			return // the delete button only under the pointer: the slim column keeps the names
+		}
+		if a.virtual(n) { // a kind is not deleted as one: its room stays, so the sizes line up
+			ui.Box(c).Size(26, 26).Shrink(0)
+			return
 		}
 		del := ui.Box(c.Key("del")).Size(26, 26).Radius(6).Shrink(0).Cursor(ui.CursorPointer)
 		ic := pal.t4

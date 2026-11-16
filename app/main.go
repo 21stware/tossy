@@ -72,6 +72,9 @@ func (a *app) view(c *ui.Context) {
 	if c.Shortcut(ui.Cmd, ui.KeyComma) && a.ask == nil { // ⌘, (Ctrl+, elsewhere)
 		a.openSettings()
 	}
+	if c.Shortcut(ui.Cmd, ui.KeyD) && a.ask == nil { // ⌘D: the disk, or the developer's slice of it
+		a.setDev(!a.devOn)
+	}
 	a.keys(c)
 	a.stepHero()
 	a.hover, a.hoverAgg, a.centerHot = scan.None, nil, false
@@ -388,6 +391,9 @@ func (a *app) nodeMenu(m *ui.Menu, n int32) {
 	if nd.IsDir() && nd.First != scan.None && n != a.focus && m.Item(T("打开")).Chosen() {
 		a.zoomTo(n)
 	}
+	if a.virtual(n) {
+		return // a kind of the developer's view: nothing on disk to show or delete
+	}
 	path := a.t.Path(n)
 	if m.Item(revealLabel()).Chosen() {
 		mygo.Shell.ShowItemInFolder(path)
@@ -445,6 +451,11 @@ func (a *app) lbot(c *ui.Context) ui.Element {
 		ui.Row(c).Padding(12, 16, 22, 16).Justify(ui.Center).Shrink(0).Children(func() {
 			a.bigButton(c)
 		})
+		// which slice of the scan the chart, the list and the button work on: beside the button,
+		// at the pane's left edge (the top strip has no room for it in a slim window)
+		if a.shown && an == nil {
+			a.viewSwitch(c).Absolute().Left(16).Top(2 + 12 + (48-30)/2)
+		}
 		if a.tvOn { // faded in the trash scene: a click here leads back, not to the hidden buttons
 			if ui.Box(c.Key("lbotx")).Absolute().Top(0).Left(0).Fill().Clicked() {
 				a.goScene(sceneBrowse)
@@ -871,8 +882,8 @@ func (a *app) diskBar(c *ui.Context) ui.Element {
 		tk = a.tweenTo(&a.diskT, float64(tr)/float64(d.total), 800*time.Millisecond)
 	}
 	vol := displayRoot(a.root)
-	if a.t != nil {
-		vol = a.name(0)
+	if a.base != nil {
+		vol = displayRoot(a.base.Root)
 	}
 	_, dw := a.diskSpot(c)
 	free := ""

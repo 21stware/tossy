@@ -19,6 +19,7 @@ type settings struct {
 	ReduceMotion bool   `json:"reduceMotion"`
 	Lang         string `json:"lang"` // "" follows the system; see languages
 
+	View        string `json:"view"`        // "dev" opens in the developer's view; "" in the disk view
 	Root        string `json:"root"`        // default scan root; "" = home
 	Exclude     string `json:"exclude"`     // one absolute path per line
 	CrossDevice bool   `json:"crossDevice"` // descend into other volumes

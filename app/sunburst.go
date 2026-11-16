@@ -1053,7 +1053,7 @@ func (a *app) paintLabels(p *ui.Painter) {
 		if maxW < 34 {
 			continue
 		}
-		name := clipText(p, a.t.Name(h.node), maxW, 11, 500)
+		name := clipText(p, a.name(h.node), maxW, 11, 500)
 		if len([]rune(name)) < 3 {
 			continue
 		}

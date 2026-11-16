@@ -89,12 +89,9 @@ func (a *app) previewUnmark(r *truckRun) []trash.Item {
 		if _, err := a.bin.Restore(e.id); err != nil {
 			continue
 		}
-		if n, found := a.trashed[e.id]; found && a.t != nil && !a.t.Attached(n) {
-			delete(a.trashed, e.id)
-			a.t.Reattach(n)
-			a.ver++
-		}
+		a.putBack(e.id)
 	}
+	a.syncLens()
 	return a.bin.List()
 }
 

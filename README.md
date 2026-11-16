@@ -59,6 +59,30 @@ About 90 built-in rules give every item one of four levels. An item without a ru
 
 Generic names such as `dist`, `build`, `target` or `vendor` only match inside a real project, recognised by marker files like `package.json`, `Cargo.toml` or `go.mod`.
 
+Personal folders are recognised by name, and some of those names are everyday words. A folder called `desktop`, `documents`, `pictures`, `music`, `mail` or `messages` that is itself a project (it holds a `.git` or a marker file) is judged as a project, so the `node_modules` of a monorepo's `desktop` app can be cleaned like any other. The folders of your home directory (`~/Documents`, `~/Desktop`, `~/Pictures`, `~/Music`, `~/Library/Mail`…) are personal whatever they hold, and so is everything inside them.
+
+### Developer view
+
+The switch beside the Auto Clean button (or ⌘D) turns the same scan into a developer's view: only what building software leaves behind, wherever it sits on the disk, grouped by kind instead of by folder.
+
+| Kind | What it holds |
+| --- | --- |
+| Dependencies | `node_modules`, Pods, Composer and Go `vendor`, Python virtualenvs, `.terraform` |
+| Build output | Rust and Maven `target`, Gradle and CMake `build`, `.next`, `dist`, `__pycache__`, Xcode archives |
+| Build cache | Xcode DerivedData, `go-build`, ccache / sccache, `.turbo`, `.pytest_cache`, coverage reports |
+| Package cache | npm, pnpm, Yarn, Cargo, Go modules, Maven, Gradle, NuGet, pub, Conda and Homebrew downloads |
+| Emulators & devices | Android emulator images (AVD), iOS simulators, device support files |
+| Containers & VMs | Docker, Colima, Lima and OrbStack disks |
+| Local models | Ollama, LM Studio, Hugging Face and PyTorch weights |
+| App cache | What apps keep in `~/Library/Caches` and `~/.cache`, Electron and browser caches |
+
+- **The first ring is the kinds, the second the items**: a project's `node_modules`, a tool's cache, an emulator. An item is named with the folder it sits in (`shop/node_modules`), and from there on you drill into the real folders.
+- **Everything else works as on the disk.** Verdicts, deleting by hand, dragging onto the bin and undo behave the same, and both views stay in step: what you delete in one is gone from the other.
+- **Auto Clean takes only developer content here**, and still only what is safe. A kind in focus has its own button that cleans the safe items of that kind. Emulators, virtual machine disks, models and virtualenvs are listed but left for you to delete one by one.
+- The view you were in is remembered for the next launch.
+
+![The developer view: the scan grouped by kind](docs/screenshots/developer.png)
+
 ### Developer folders
 
 - **Git checkouts are judged as a whole.** Before you delete a repository or worktree, Tossy asks git about uncommitted changes, untracked files and commits that exist only on this machine, and tells you what would be lost.
@@ -113,6 +137,7 @@ Settings are grouped into Appearance, Scan (default location, excluded paths, cr
 | Backspace | Go up one level |
 | Delete, ⌘⌫ | Move the selection to the trash |
 | Esc | Leave the analysis / the trash view / the detail, or go up |
+| ⌘D (Ctrl+D) | Switch between the disk view and the developer view |
 | ⌘, (Ctrl+,) | Open Settings |
 
 ## Command line
@@ -120,13 +145,14 @@ Settings are grouped into Appearance, Scan (default location, excluded paths, cr
 ```
 tossy scan  [-w workers] [-x] [-top n] [path]   scan and print the largest entries
 tossy eval  [-review] [-top n] [path]           scan, then list what is safe to clean (read-only)
+tossy dev   [-top n] [path]                     scan, then list developer content by kind (read-only)
 tossy clean [-review] [-yes] [path]             move safe items (and learned habits) to the trash; dry run without -yes
 tossy rm path...                                move to the trash by hand (Tossy learns from this)
 tossy trash [list | restore id... | empty [id...]]
 tossy habit [list | forget key]
 ```
 
-`path` defaults to the current directory. `-review` also includes review-level items.
+`path` defaults to the current directory. `-review` also includes review-level items. `tossy dev` does not read personal folders (Documents, Pictures, a `.git`) or trash folders at all, since nothing in them is developer content.
 
 ## Build and run
 

@@ -130,6 +130,10 @@ func gitKindLabel(k gitrepo.Kind) string {
 // focusInfo sits under the list's header: what the folder in focus is to a developer.
 func (a *app) focusInfo(c *ui.Context) {
 	n := a.focus
+	if a.t != nil && a.virtual(n) && a.t.Attached(n) {
+		a.kindPanel(c, n)
+		return
+	}
 	if a.t == nil || n <= 0 || !a.t.Attached(n) || !a.t.Nodes[n].IsDir() {
 		return
 	}

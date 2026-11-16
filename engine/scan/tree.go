@@ -45,6 +45,11 @@ type Tree struct {
 	Nodes []Node
 	names []byte
 	Stats Stats
+
+	// a lens (see Lens): names that are not in the arena, and the absolute path of each item
+	lens   bool
+	alias  map[int32]string
+	anchor map[int32]string
 }
 
 // Stats summarises a scan.
@@ -55,27 +60,56 @@ type Stats struct {
 }
 
 func (t *Tree) Name(i int32) string {
+	if t.alias != nil {
+		if s, ok := t.alias[i]; ok {
+			return s
+		}
+	}
 	n := &t.Nodes[i]
 	return string(t.names[n.nameOff : n.nameOff+uint32(n.nameLen)])
 }
 
 // nameEq compares without allocating.
 func (t *Tree) nameEq(i int32, s string) bool {
+	if t.alias != nil {
+		if a, ok := t.alias[i]; ok {
+			return a == s
+		}
+	}
 	n := &t.Nodes[i]
 	return int(n.nameLen) == len(s) && string(t.names[n.nameOff:n.nameOff+uint32(n.nameLen)]) == s
 }
 
-// Path returns the absolute path of node i.
+// Path returns the absolute path of node i. A lens's virtual nodes have none: "".
 func (t *Tree) Path(i int32) string {
-	if i == 0 {
-		return t.Root
-	}
+	root := t.Root
 	var parts []string
-	for j := i; j > 0; j = t.Nodes[j].Parent {
-		parts = append(parts, t.Name(j))
+	if t.lens {
+		// up to the item that heads this subtree: its path is the scan's
+		j := i
+		for ; j > 0; j = t.Nodes[j].Parent {
+			if p, ok := t.anchor[j]; ok {
+				root = p
+				break
+			}
+			parts = append(parts, t.Name(j))
+		}
+		if j <= 0 {
+			return ""
+		}
+	} else {
+		if i == 0 {
+			return t.Root
+		}
+		for j := i; j > 0; j = t.Nodes[j].Parent {
+			parts = append(parts, t.Name(j))
+		}
+	}
+	if len(parts) == 0 {
+		return root
 	}
 	var b strings.Builder
-	b.WriteString(t.Root)
+	b.WriteString(root)
 	for k := len(parts) - 1; k >= 0; k-- {
 		if !strings.HasSuffix(b.String(), string(filepath.Separator)) {
 			b.WriteByte(filepath.Separator)
@@ -115,6 +149,9 @@ func (t *Tree) Child(i int32, name string) int32 {
 
 // Find resolves an absolute path to a node index, or None.
 func (t *Tree) Find(path string) int32 {
+	if t.lens {
+		return t.findLens(path)
+	}
 	path = filepath.Clean(path)
 	root := filepath.Clean(t.Root)
 	if path == root {

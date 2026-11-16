@@ -19,6 +19,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   tossy scan [-w workers] [-x] [-top n] [path]   scan and print the largest entries
   tossy eval [-review] [-top n] [path]           scan, then list what is safe to clean (read-only)
+  tossy dev [-top n] [path]                      scan, then list developer content by kind (read-only)
   tossy clean [-review] [-yes] [path]            move safe items (+ learned habits) to the trash; dry run without -yes
   tossy rm path...                               move to the trash by hand (Tossy learns from this)
   tossy trash [list | restore id... | empty [id...]]
@@ -35,6 +36,8 @@ func main() {
 		cmdScan(os.Args[2:])
 	case "eval":
 		cmdEval(os.Args[2:])
+	case "dev":
+		cmdDev(os.Args[2:])
 	case "clean":
 		cmdClean(os.Args[2:])
 	case "rm":
@@ -169,5 +172,73 @@ func cmdEval(args []string) {
 			break
 		}
 		fmt.Printf("  %10s  %-7s %-6s %s\n", size(c.Size), c.Rule.Level, c.Rule.Tag, t.Path(c.Node))
+	}
+}
+
+// devKindNames are the developer kinds as the command line prints them.
+var devKindNames = map[safety.DevKind]string{
+	safety.DevDeps: "Dependencies", safety.DevBuild: "Build output", safety.DevCache: "Build caches",
+	safety.DevPackages: "Package caches", safety.DevDevices: "Emulators & devices", safety.DevVMs: "Containers & VMs",
+	safety.DevModels: "Local models", safety.DevAppCache: "App caches",
+}
+
+// cmdDev is the developer's view on the command line: what building software left behind, by
+// kind, largest first.
+func cmdDev(args []string) {
+	fs := flag.NewFlagSet("dev", flag.ExitOnError)
+	top := fs.Int("top", 5, "items to list per kind")
+	fs.Parse(args)
+	root := "."
+	if fs.NArg() > 0 {
+		root = fs.Arg(0)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	// personal data and trash folders hold nothing this lists: they are not read at all
+	t, err := scan.Scan(ctx, root, scan.Options{Skip: safety.DevSkip})
+	if t == nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	t0 := time.Now()
+	e := safety.New(t)
+	type group struct {
+		kind  safety.DevKind
+		size  int64
+		items []safety.DevItem
+	}
+	groups := map[safety.DevKind]*group{}
+	var total, safe int64
+	for _, it := range e.DevItems(0) {
+		g := groups[it.Kind]
+		if g == nil {
+			g = &group{kind: it.Kind}
+			groups[it.Kind] = g
+		}
+		g.items = append(g.items, it)
+		g.size += it.Size
+		total += it.Size
+		if it.Rule.Level == safety.Safe {
+			safe += it.Size
+		}
+	}
+	el := time.Since(t0)
+	var gs []*group
+	for _, g := range groups {
+		sort.Slice(g.items, func(i, j int) bool { return g.items[i].Size > g.items[j].Size })
+		gs = append(gs, g)
+	}
+	sort.Slice(gs, func(i, j int) bool { return gs[i].size > gs[j].size })
+	fmt.Printf("%s · scanned in %d ms · evaluated in %d ms\n", t.Root, t.Stats.Millis, el.Milliseconds())
+	fmt.Printf("developer content %s · %s of it safe to clean\n", size(total), size(safe))
+	for _, g := range gs {
+		fmt.Printf("\n%-20s %10s  %d items\n", devKindNames[g.kind], size(g.size), len(g.items))
+		for i, it := range g.items {
+			if i >= *top {
+				fmt.Printf("  %10s  %d more\n", "", len(g.items)-i)
+				break
+			}
+			fmt.Printf("  %10s  %-7s %s\n", size(it.Size), it.Rule.Level, t.Path(it.Node))
+		}
 	}
 }

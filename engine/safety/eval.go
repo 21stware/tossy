@@ -36,6 +36,9 @@ type Evaluator struct {
 	git   map[int32]gitrepo.Kind // checkouts seen so far
 	// readGit reads a .git file (a seam for tests).
 	readGit func(path string) string
+	// a lens's evaluator (see Lens): the scan's, and each node's node in the scan
+	base *Evaluator
+	orig []int32
 }
 
 func New(t *scan.Tree) *Evaluator {
@@ -74,6 +77,12 @@ func (e *Evaluator) Own(i int32) *Rule {
 		return e.own[i]
 	}
 	e.done[i] = true
+	if e.base != nil {
+		if o := e.orig[i]; o != scan.None {
+			e.own[i] = e.base.Own(o)
+		}
+		return e.own[i]
+	}
 	t := e.t
 	n := &t.Nodes[i]
 	if n.Flags&scan.FlagCloud != 0 {
@@ -99,6 +108,9 @@ func (e *Evaluator) Own(i int32) *Rule {
 			r = x
 			break
 		}
+	}
+	if r != nil && r == e.rules.personal && e.namesake(i, name) {
+		r = nil // a project that is merely called "desktop": judged as any other folder
 	}
 	if r == nil && n.IsDir() {
 		for _, x := range e.rules.suffixes {
@@ -127,6 +139,18 @@ func (e *Evaluator) Own(i int32) *Rule {
 	}
 	e.own[i] = r
 	return r
+}
+
+// namesake reports whether folder i only shares its name with a personal folder: the name is an
+// everyday word (see commonWords), the folder is not one of a home directory's own, and it is
+// itself a project, holding a .git or a file that rules take as proof of one (package.json,
+// Cargo.toml…). Inside personal data it changes nothing: the folder above still decides.
+func (e *Evaluator) namesake(i int32, name string) bool {
+	n := &e.t.Nodes[i]
+	if i <= 0 || !n.IsDir() || !commonWords[name] || personalPlace.MatchString(Norm(e.t.Path(i))) {
+		return false
+	}
+	return e.t.Child(i, ".git") != scan.None || e.hasMarker(i, e.rules.projects)
 }
 
 // hasMarker reports whether directory d holds an entry named like one of markers
@@ -176,6 +200,12 @@ func (e *Evaluator) checkout(i int32) *Rule {
 
 // Git says what kind of checkout node i is (gitrepo.None if it is not one).
 func (e *Evaluator) Git(i int32) gitrepo.Kind {
+	if e.base != nil {
+		if o := e.orig[i]; o != scan.None {
+			return e.base.Git(o)
+		}
+		return gitrepo.None
+	}
 	e.Own(i)
 	return e.git[i]
 }

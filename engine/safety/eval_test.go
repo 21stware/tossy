@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/21stware/tossy/engine/gitrepo"
 	"github.com/21stware/tossy/engine/scan"
 )
 
@@ -214,5 +215,259 @@ func TestCheckoutNamedLikeCache(t *testing.T) {
 	}
 	if cands["src/sccache"] || !cands["src/sccache/node_modules"] || !cands["home/ccache"] {
 		t.Fatalf("candidates %v", cands)
+	}
+}
+
+// The developer's view: rule candidates by kind, and a lens of them judged as the scan is.
+func TestDevLens(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{
+		"web/package.json", "web/node_modules/a/index.js", "web/node_modules/a/dist/a.js", "web/node_modules/a/package.json",
+		"web/dist/app.js", "web/.turbo/x", "web/src/app.ts",
+		"rs/Cargo.toml", "rs/target/debug/app", "py/.venv/lib/site.py", "py/.venv/lib/__pycache__/site.pyc",
+		"home/.cache/huggingface/hub/model.bin", "home/.npm/_cacache/x", "home/.android/avd/Pixel.avd/userdata.img",
+		"Documents/proj/node_modules/x.js", "Downloads/app.dmg",
+	} {
+		mk(t, root, rel, 5000, 0)
+	}
+	tr, err := scan.Scan(context.Background(), root, scan.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := New(tr)
+	want := map[string]DevKind{
+		"web/node_modules": DevDeps, "web/dist": DevBuild, "web/.turbo": DevCache, "rs/target": DevBuild,
+		"py/.venv": DevDeps, "home/.cache/huggingface": DevModels, "home/.npm": DevPackages, "home/.android/avd": DevDevices,
+	}
+	items := e.DevItems(0)
+	byKind := map[DevKind][]scan.Item{}
+	rules := map[int32]*Rule{}
+	for _, it := range items {
+		rel := filepath.ToSlash(tr.Path(it.Node)[len(root)+1:])
+		if want[rel] != it.Kind {
+			t.Errorf("%s: kind %v, want %v", rel, it.Kind, want[rel])
+		}
+		delete(want, rel)
+		if !it.Rule.Pick {
+			t.Errorf("%s: its rule %s is not a pick", rel, it.Rule.ID)
+		}
+		byKind[it.Kind] = append(byKind[it.Kind], scan.Item{Node: it.Node})
+		rules[it.Node] = it.Rule
+	}
+	for rel := range want {
+		t.Errorf("%s is not among the developer items", rel)
+	}
+
+	var groups []scan.Group
+	for _, k := range DevKinds() {
+		groups = append(groups, scan.Group{Name: k.String(), Items: byKind[k]})
+	}
+	l, orig := tr.Lens("dev", groups)
+	own := map[int32]*Rule{}
+	for i, o := range orig {
+		if r := rules[o]; r != nil && l.Nodes[l.Nodes[i].Parent].Parent == 0 {
+			own[int32(i)] = r
+		}
+	}
+	for _, g := range l.Children(0, nil) {
+		own[g] = &Rule{ID: "group", Level: Review}
+	}
+	le := e.Lens(l, orig, own)
+	f := func(rel string) int32 {
+		n := l.Find(filepath.Join(root, rel))
+		if n == scan.None {
+			t.Fatalf("no %s in the lens", rel)
+		}
+		return n
+	}
+	if v := le.Verdict(f("web/node_modules/a/index.js")); v.Rule.ID != "node-modules" || !v.Inherited {
+		t.Errorf("inside node_modules: %s", v.Rule.ID)
+	}
+	// a rule that needs the project file beside the folder still holds, though the lens has no src/
+	if v := le.Verdict(f("rs/target")); v.Rule.ID != "cargo-target" || v.Level() != Safe {
+		t.Errorf("target: %s", v.Rule.ID)
+	}
+	// the plan of the lens is the scan's, less what is not a developer's
+	got := map[string]bool{}
+	var size int64
+	for _, c := range le.Candidates(0, Safe) {
+		got[filepath.ToSlash(l.Path(c.Node)[len(root)+1:])] = true
+		size += c.Size
+	}
+	for _, rel := range []string{"web/node_modules", "web/.turbo", "rs/target", "home/.npm", "py/.venv/lib/__pycache__"} {
+		if !got[rel] {
+			t.Errorf("%s is not in the lens's plan %v", rel, got)
+		}
+		delete(got, rel)
+	}
+	if len(got) != 0 {
+		t.Errorf("the lens's plan also takes %v", got)
+	}
+	if size <= 0 || size >= l.Nodes[0].Size {
+		t.Errorf("the plan takes %d of %d", size, l.Nodes[0].Size)
+	}
+	if sums := le.LevelSums(0); sums[Safe]+sums[Review]+sums[Risky]+sums[Protected] != l.Nodes[0].Size {
+		t.Errorf("level sums %v do not add up to the root's %d", sums, l.Nodes[0].Size)
+	}
+}
+
+// Every rule a developer kind names exists.
+func TestDevKindsNameRules(t *testing.T) {
+	ids := map[string]bool{}
+	for _, r := range builtin.all {
+		ids[r.ID] = true
+	}
+	for id := range devOf {
+		if !ids[id] {
+			t.Errorf("devOf names %q, which is not a rule", id)
+		}
+	}
+}
+
+// A scan that leaves unread what DevSkip names finds the same developer content.
+func TestDevSkip(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{
+		"web/package.json", "web/node_modules/a/index.js", "web/.git/objects/pack.bin", "web/.git/node_modules/x.js",
+		"rs/Cargo.toml", "rs/target/debug/app", "rs/tmp/scratch.bin",
+		"Documents/proj/node_modules/x.js", "Pictures/2025/a.jpg", "app/desktop/node_modules/y.js",
+		"mono/desktop/package.json", "mono/desktop/node_modules/d.js",
+		"home/.claude/projects/s/1.jsonl", "home/.cache/huggingface/hub/model.bin", "home/.npm/_cacache/x",
+		"home/.Trash/old/node_modules/z.js", "crashdumps/.git/HEAD", "crashdumps/node_modules/c.js",
+	} {
+		mk(t, root, rel, 5000, 0)
+	}
+	list := func(opt scan.Options) (map[string]int64, *scan.Tree) {
+		tr, err := scan.Scan(context.Background(), root, opt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]int64{}
+		for _, it := range New(tr).DevItems(0) {
+			out[filepath.ToSlash(tr.Path(it.Node)[len(root)+1:])] = it.Size
+		}
+		return out, tr
+	}
+	full, _ := list(scan.Options{})
+	fast, tr := list(scan.Options{Skip: DevSkip})
+	if len(full) == 0 || len(fast) != len(full) {
+		t.Fatalf("developer items: %v in full, %v skipping", full, fast)
+	}
+	for rel, size := range full {
+		if fast[rel] != size {
+			t.Errorf("%s: %d in full, %d skipping", rel, size, fast[rel])
+		}
+	}
+	// a checkout named like a cache, and a project named like a personal folder, are entered:
+	// they are read
+	for _, rel := range []string{"crashdumps/node_modules", "mono/desktop/node_modules"} {
+		if _, ok := fast[rel]; !ok {
+			t.Errorf("%s was not found: %v", rel, fast)
+		}
+	}
+	// a folder of an everyday name is skipped only where it is a home directory's own; here
+	// (a temporary folder) only reading it tells whether it is a project
+	for rel, skip := range map[string]bool{
+		"web/.git": true, "home/.claude/projects": true, "Documents": false, "Pictures": false, "app/desktop": false,
+		"web/node_modules": false, "rs/target": false, "rs/tmp": false, "home/.cache/huggingface": false, "home/.npm": false, "crashdumps": false,
+	} {
+		n := tr.Find(filepath.Join(root, rel))
+		if n == scan.None {
+			t.Fatalf("%s is not recorded", rel)
+		}
+		if got := tr.Nodes[n].First == scan.None; got != skip {
+			t.Errorf("%s: skipped %v, want %v", rel, got, skip)
+		}
+		if !tr.Nodes[n].IsDir() {
+			t.Errorf("%s is no longer a folder", rel)
+		}
+	}
+	// the .git that was not read still makes its folder a checkout
+	if k := New(tr).Git(tr.Find(filepath.Join(root, "web"))); k != gitrepo.Repo {
+		t.Errorf("web is %v, not a repository", k)
+	}
+}
+
+// Where DevSkip decides by place.
+func TestDevSkipPlaces(t *testing.T) {
+	for _, c := range []struct {
+		dir, name string
+		skip      bool
+	}{
+		{"/Users/x", "Documents", true}, {"/Users/x", "Desktop", true}, {"/home/x", "Pictures", true}, {"/Users/x/Library", "Mail", true},
+		{`C:\Users\x\OneDrive - Corp`, "Documents", true},
+		{"/Users/x/repo/mono", "desktop", false}, {"/Users/x/Desktop", "desktop", false}, {"/Volumes/Backup", "Documents", false},
+		{"/Users/x/repo/web", ".git", true}, {"/Users/x", ".ssh", true}, {"/Users/x/Library", "Mobile Documents", true},
+		{"/Users/x", ".Trash", true}, {"/Users/x/repo", "tmp", false}, {"/Users/x/repo", "node_modules", false}, {"/Users/x/repo", "src", false},
+	} {
+		if got := DevSkip(c.dir, c.name); got != c.skip {
+			t.Errorf("DevSkip(%q, %q) = %v, want %v", c.dir, c.name, got, c.skip)
+		}
+	}
+}
+
+// A project that is merely called like a personal folder is judged as a project; a folder of
+// that name that is not one stays personal data, and so does anything inside personal data.
+func TestNamesake(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{
+		"mono/.git/HEAD", "mono/desktop/package.json", "mono/desktop/src/main.ts", "mono/desktop/node_modules/a.js",
+		"mono/mail/Cargo.toml", "mono/mail/target/debug/mail",
+		"clone/music/.git/HEAD", "clone/music/player.c",
+		"notes/documents/scan.pdf", "notes/documents/node_modules/n.js",
+		"Documents/desktop/package.json", "Documents/desktop/node_modules/b.js",
+		"keys/.ssh/package.json", "keys/.ssh/node_modules/c.js",
+	} {
+		mk(t, root, rel, 5000, 0)
+	}
+	tr, err := scan.Scan(context.Background(), root, scan.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := New(tr)
+	f := func(rel string) int32 {
+		n := tr.Find(filepath.Join(root, rel))
+		if n == scan.None {
+			t.Fatalf("no %s", rel)
+		}
+		return n
+	}
+	for rel, want := range map[string]string{
+		"mono/desktop":              "git-repo",     // part of the checkout it sits in
+		"mono/desktop/src/main.ts":  "git-repo",     //
+		"mono/desktop/node_modules": "node-modules", //
+		"mono/mail/target":          "cargo-target", //
+		"clone/music":               "git-repo",     // a repository of its own
+		"notes/documents":           "personal",     // nothing says it is a project
+		"notes/documents/scan.pdf":  "personal",     //
+		"Documents":                 "personal",     //
+		"Documents/desktop":         "personal",     // inside personal data: the folder above decides
+		"keys/.ssh":                 "personal",     // not an everyday word: personal whatever it holds
+	} {
+		if v := e.Verdict(f(rel)); v.Rule.ID != want {
+			t.Errorf("%s is judged by %s, want %s", rel, v.Rule.ID, want)
+		}
+	}
+	got := map[string]bool{}
+	for _, c := range e.Candidates(0, Safe) {
+		got[filepath.ToSlash(tr.Path(c.Node)[len(root)+1:])] = true
+	}
+	for rel, want := range map[string]bool{
+		"mono/desktop/node_modules": true, "mono/mail/target": true,
+		"notes/documents/node_modules": false, "Documents/desktop/node_modules": false, "keys/.ssh/node_modules": false,
+	} {
+		if got[rel] != want {
+			t.Errorf("%s among the safe candidates: %v, want %v (%v)", rel, got[rel], want, got)
+		}
+	}
+	// a home directory's own folders are personal whatever they hold
+	for p, want := range map[string]bool{
+		"/users/x/documents": true, "/home/x/desktop": true, "c:/users/x/pictures": true, "c:/users/x/onedrive - corp/documents": true,
+		"/users/x/library/mail": true, "/users/x/library/messages": true,
+		"/users/x/repo/desktop": false, "/users/x/desktop/desktop": false, "/volumes/backup/documents": false, "/users/x/mail": false,
+	} {
+		if personalPlace.MatchString(p) != want {
+			t.Errorf("personalPlace(%s) = %v, want %v", p, !want, want)
+		}
 	}
 }
