@@ -64,7 +64,7 @@ func (a *app) trashPanel(c *ui.Context) {
 				// the dock's size flies here (see flySize): hidden until it lands; measured from
 				// last frame's layout, since a hidden element paints nothing to measure
 				a.binS.bigR, a.binS.bigF = bt.Bounds(), bf
-				if a.motion() && a.binS.heroK < 1 {
+				if a.binS.flying {
 					bt.Opacity(0)
 				}
 				sub := T("删除的内容会先放在这里，清空前都可以还原")

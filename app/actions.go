@@ -198,12 +198,7 @@ func (a *app) dock(c *ui.Context) {
 	// trash scene grows it into a hero on the trash panel's stage, in the same column
 	inT := a.sceneOn() == sceneTrash
 	W, H := c.Size()
-	hk := 0.0
-	if inT {
-		hk = 1
-	}
-	k := max(0, float32(a.springTo(&f.heroSp, hk)))
-	f.heroK = min(k, 1)
+	k := f.heroX // stepped at the start of the frame (stepHero)
 	// the hero's place and size come from the trash view's final layout, not from the stage as
 	// it moves: the panels widen and the bin's reserved foot shrinks while the bin grows, and
 	// following those mid-way bent its path (it dipped before settling)
@@ -311,12 +306,15 @@ func (a *app) dock(c *ui.Context) {
 // grows into the header's, and shrinks back on the way out, riding the hero's spring.
 func (a *app) flySize(c *ui.Context, k float32, n int, size int64) {
 	f := &a.binS
-	if k <= 0 || k >= 1 || !f.szSet || f.bigR.W == 0 || !a.motion() {
+	if !f.flying { // decided once for the frame, with the header and the dock (stepHero)
 		return
 	}
 	W, H := c.Size()
 	x0, y0 := W-f.szDX, H-f.szDY
 	x1, y1 := f.bigR.X, f.bigR.Y
+	if f.bigR.W == 0 { // the header has not been laid out yet: hold at the dock for a frame
+		x1, y1 = x0, y0
+	}
 	fs := f.bigF
 	if fs == 0 {
 		fs = 34

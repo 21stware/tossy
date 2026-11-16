@@ -914,7 +914,17 @@ func trimFloat(f float64) string {
 func centerText(p *ui.Painter, x, y float32, s string, size float32, weight int, c ui.Color, font string) {
 	sp := ui.Span{Text: s, Size: size, Weight: weight, Color: c, Font: font}
 	w, h := p.MeasureText(0, sp)
-	p.RichText(x-w/2, y-h/2, 0, sp)
+	spanAt(p, x-w/2, y-h/2, sp)
+}
+
+// spanAt paints one span, unless its color has faded out. MyGo reads a span whose color has
+// no alpha as one that sets no color, and paints it in the painter's text color, opaque: a
+// fade that reaches 0 would flash the text at full strength.
+func spanAt(p *ui.Painter, x, y float32, sp ui.Span) {
+	if sp.Color.A == 0 {
+		return
+	}
+	p.RichText(x, y, 0, sp)
 }
 
 func clipText(p *ui.Painter, s string, maxW, size float32, weight int) string {
@@ -1008,7 +1018,7 @@ func arcText(p *ui.Painter, str string, cx, cy, r float32, am float64, flip bool
 			rot = ang - math.Pi/2
 		}
 		p.Transform(ui.Rotation(float32(rot*180/math.Pi)), px, py, func() {
-			p.RichText(px-x.w/2, py-x.h/2, 0, ui.Span{Text: x.s, Size: size, Weight: weight, Color: c, Font: font})
+			spanAt(p, px-x.w/2, py-x.h/2, ui.Span{Text: x.s, Size: size, Weight: weight, Color: c, Font: font})
 		})
 		acc += x.w
 	}

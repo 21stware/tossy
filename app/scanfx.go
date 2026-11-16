@@ -82,9 +82,9 @@ func (a *app) paintScanPath(p *ui.Painter, cx, y, maxW float32, cur string, ang 
 	p.Clip(box, 0, func() {
 		d := lh + 2
 		if k < 1 && s.old != "" {
-			p.RichText(s.oldX, top-d*k, 0, span(s.old, pal.t4.Alpha(1-k)))
+			spanAt(p, s.oldX, top-d*k, span(s.old, pal.t4.Alpha(1-k)))
 		}
-		p.RichText(s.x, top+d*(1-k), 0, span(s.line, pal.t2))
+		spanAt(p, s.x, top+d*(1-k), span(s.line, pal.t2))
 	})
 	if k < 1 {
 		p.AnimationFrame()

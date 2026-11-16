@@ -353,7 +353,9 @@ func (a *app) paintTrashSun(p *ui.Painter, r ui.Rect) {
 	}
 
 	// centre: the bin's total, or what is hovered; hovering the centre offers the way back
-	ca := float32(min(1, k*3))
+	// the total flies from the dock to the header (flySize): the centre, which says the same,
+	// waits until it has landed, so the size is never on screen twice while it moves
+	ca := float32(min(1, k*3)) * a.binS.centerA
 	if ts.hot {
 		var c ui.Path
 		p.FillPath(circle(&c, s.cx, s.cy, s.r0-2, 0, tau), pal.ink.Alpha(.035))
@@ -432,11 +434,12 @@ func (a *app) trashChartInput(chart ui.Element) {
 	}
 }
 
-// trashSummary is the trash scene's subtitle: how much, and the folder it all came from.
+// trashSummary is the trash scene's subtitle: how much, and the folder it all came from;
+// nothing for an empty trash, which the header under the bin already says.
 func (a *app) trashSummary() string {
 	items := a.bin.List()
 	if len(items) == 0 {
-		return T("空")
+		return ""
 	}
 	var total int64
 	for _, it := range items {

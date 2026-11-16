@@ -349,7 +349,7 @@ func (a *app) paintFly(p *ui.Painter) {
 			sp := ui.Span{Text: bs.freed, Size: 13, Weight: 600, Color: a.pal.level[0].Alpha(float32(op))}
 			w, _ := p.MeasureText(0, sp)
 			hx, hy := bs.toHero(ox+T.w/2, oy)
-			p.RichText(hx-w/2, hy+float32(dy), 0, sp)
+			spanAt(p, hx-w/2, hy+float32(dy), sp)
 			a.frame = true
 		}
 	}
