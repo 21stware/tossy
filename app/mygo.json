@@ -2,5 +2,10 @@
   "name": "Tossy",
   "identifier": "app.tossy.Tossy",
   "version": "0.1.0",
-  "out": "build"
+  "out": "build",
+  "linux": {
+    "comment": "See what fills your disk, and clean only what is safe to clean",
+    "categories": ["Utility", "System", "FileTools"],
+    "webview": false
+  }
 }
