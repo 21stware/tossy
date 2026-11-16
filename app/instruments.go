@@ -38,8 +38,7 @@ func (a *app) modeName() string {
 func (a *app) instrHUD(p *ui.Painter, r ui.Rect) {
 	s, ink := &a.sun, a.pal.ink
 	rb := s.rad + 12
-	var tk ui.Path
-	for i := 0; i < 180; i++ {
+	for i := 0; i < 180; i++ { // piece by piece (see strokeLine)
 		l := float32(3)
 		if i%15 == 0 {
 			l = 9
@@ -49,9 +48,8 @@ func (a *app) instrHUD(p *ui.Painter, r ui.Rect) {
 		ang := float64(i)*tau/180 + a0Top
 		x0, y0 := polar(s.cx, s.cy, rb, ang)
 		x1, y1 := polar(s.cx, s.cy, rb+l, ang)
-		tk.MoveTo(x0, y0).LineTo(x1, y1)
+		strokeLine(p, x0, y0, x1, y1, 1, ink.Alpha(.22))
 	}
-	p.StrokePath(&tk, 1, ink.Alpha(.22))
 	for i, lab := range []string{"000", "090", "180", "270"} {
 		x, y := polar(s.cx, s.cy, rb+20, float64(i)*math.Pi/2+a0Top)
 		centerText(p, x, y, lab, 9, 500, ink.Alpha(.45), "monospace")
@@ -59,16 +57,11 @@ func (a *app) instrHUD(p *ui.Painter, r ui.Rect) {
 	// dashed rings turn with the view: they move while zooming and rest otherwise
 	v := s.cur
 	rot := float64(v.x0+v.x1) * math.Pi
-	var d1, d2 ui.Path
-	circle(&d1, s.cx, s.cy, rb+32, a0Top+rot, a0Top+rot+tau).Dash(0, 2, 6)
-	circle(&d2, s.cx, s.cy, rb+38, a0Top-2*rot, a0Top-2*rot+tau).Dash(0, 24, 10, 4, 10)
-	p.StrokePath(&d1, 1, ink.Alpha(.18))
-	p.StrokePath(&d2, 1, ink.Alpha(.12))
-	var rt ui.Path
+	dashedRing(p, s.cx, s.cy, rb+32, a0Top+rot, []float32{2, 6}, 1, ink.Alpha(.18))
+	dashedRing(p, s.cx, s.cy, rb+38, a0Top-2*rot, []float32{24, 10, 4, 10}, 1, ink.Alpha(.12))
 	for _, q := range [4][2]float32{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
-		rt.MoveTo(s.cx+q[0]*(rb+44), s.cy+q[1]*(rb+44)).LineTo(s.cx+q[0]*(rb+56), s.cy+q[1]*(rb+56))
+		strokeLine(p, s.cx+q[0]*(rb+44), s.cy+q[1]*(rb+44), s.cx+q[0]*(rb+56), s.cy+q[1]*(rb+56), 1, ink.Alpha(.35))
 	}
-	p.StrokePath(&rt, 1, ink.Alpha(.35))
 	if a.pal.instr == instrMech {
 		return // mech writes its own corners
 	}
@@ -105,16 +98,16 @@ func (a *app) instrMech(p *ui.Painter, r ui.Rect) {
 	})
 	band(.06, .2, 4, ui.Hex("#1f4fa8"))
 	band(.205, .235, 4, ui.Hex("#d7262e"))
-	// registration marks at the chart's corners
-	var m ui.Path
+	// registration marks at the chart's corners, each a path of its own (see strokeLine)
 	for _, c := range [4][3]float32{{r.X + 14, r.Y + 14, 1}, {r.X + r.W - 14, r.Y + 14, -1}, {r.X + 14, r.Y + r.H - 14, 1}, {r.X + r.W - 14, r.Y + r.H - 14, -1}} {
 		dy := float32(1)
 		if c[1] > r.Y+r.H/2 {
 			dy = -1
 		}
+		var m ui.Path
 		m.MoveTo(c[0], c[1]+dy*14).LineTo(c[0], c[1]).LineTo(c[0]+c[2]*14, c[1])
+		p.StrokePath(&m, 1.6, ink.Alpha(.55))
 	}
-	p.StrokePath(&m, 1.6, ink.Alpha(.55))
 	a.monoText(p, r.X+24, r.Y+20, "UNIT·DISK  /  ARMOR MAP", 10, ink.Alpha(.7))
 	a.monoText(p, r.X+24, r.Y+34, fmt.Sprintf("SEC %03d · LV %02d · %s", a.arcCount, a.depth(a.focus), a.modeName()), 9.5, ink.Alpha(.45))
 	label := fmt.Sprintf("LOAD %s  ·  %s FILES", strings.ToUpper(fmtSize(a.t.Nodes[0].Size)), fmtNum(a.t.Stats.Files))
@@ -126,11 +119,11 @@ func (a *app) instrMech(p *ui.Painter, r ui.Rect) {
 // instrBlueprint: centre lines across the sheet, a radius dimension, ring index and title block.
 func (a *app) instrBlueprint(p *ui.Painter, r ui.Rect) {
 	s, ink := &a.sun, a.pal.ink
-	var cl ui.Path
-	cl.MoveTo(r.X+21, s.cy).LineTo(r.X+r.W-21, s.cy)
-	cl.MoveTo(s.cx, r.Y+21).LineTo(s.cx, r.Y+r.H-21)
-	cl.Dash(0, 18, 4, 3, 4)
-	p.StrokePath(&cl, .8, ink.Alpha(.35))
+	var ch, cv ui.Path // apart: one path across the sheet both ways would take a mask of all of it
+	ch.MoveTo(r.X+21, s.cy).LineTo(r.X+r.W-21, s.cy).Dash(0, 18, 4, 3, 4)
+	cv.MoveTo(s.cx, r.Y+21).LineTo(s.cx, r.Y+r.H-21).Dash(0, 18, 4, 3, 4)
+	p.StrokePath(&ch, .8, ink.Alpha(.35))
+	p.StrokePath(&cv, .8, ink.Alpha(.35))
 	// radius dimension at 45° below right, with arrowheads and the total size
 	ang := math.Pi / 4
 	x0, y0 := polar(s.cx, s.cy, s.r0, ang)
@@ -175,8 +168,7 @@ func (a *app) instrBlueprint(p *ui.Painter, r ui.Rect) {
 func (a *app) instrTerminal(p *ui.Painter, r ui.Rect) {
 	s, ink := &a.sun, a.pal.ink
 	rb := s.rad + 14
-	var tk ui.Path
-	for i := 0; i < 72; i++ {
+	for i := 0; i < 72; i++ { // piece by piece (see strokeLine)
 		ang := float64(i)*tau/72 + a0Top
 		l := float32(4)
 		if i%6 == 0 {
@@ -184,15 +176,14 @@ func (a *app) instrTerminal(p *ui.Painter, r ui.Rect) {
 		}
 		x0, y0 := polar(s.cx, s.cy, rb, ang)
 		x1, y1 := polar(s.cx, s.cy, rb+l, ang)
-		tk.MoveTo(x0, y0).LineTo(x1, y1)
+		strokeLine(p, x0, y0, x1, y1, 1, ink.Alpha(.35))
 	}
-	p.StrokePath(&tk, 1, ink.Alpha(.35))
-	var br ui.Path
 	in := float32(12)
 	for _, c := range [4][4]float32{{r.X + in, r.Y + in, 1, 1}, {r.X + r.W - in, r.Y + in, -1, 1}, {r.X + in, r.Y + r.H - in, 1, -1}, {r.X + r.W - in, r.Y + r.H - in, -1, -1}} {
+		var br ui.Path
 		br.MoveTo(c[0], c[1]+c[3]*20).LineTo(c[0], c[1]).LineTo(c[0]+c[2]*20, c[1])
+		p.StrokePath(&br, 1.2, ink.Alpha(.6))
 	}
-	p.StrokePath(&br, 1.2, ink.Alpha(.6))
 	a.monoText(p, r.X+24, r.Y+20, fmt.Sprintf("[ SECTORS %d ] [ DEPTH %d ] [ %s ]", a.arcCount, a.depth(a.focus), a.modeName()), 10.5, ink.Alpha(.75))
 	line := "> du -sh " + clipText(p, a.t.Path(a.focus), r.W*.55, 10.5, 400) + "  " + strings.ToUpper(fmtSize(a.t.Nodes[a.focus].Size))
 	line, done := a.typed(p, line)
@@ -210,8 +201,7 @@ func (a *app) instrTerminal(p *ui.Painter, r ui.Rect) {
 func (a *app) instrTE(p *ui.Painter, r ui.Rect) {
 	s, ink := &a.sun, a.pal.ink
 	rb := s.rad + 16
-	var tk ui.Path
-	for i := 0; i <= 50; i++ {
+	for i := 0; i <= 50; i++ { // piece by piece (see strokeLine)
 		ang := a0Top + float64(i)/50*tau
 		l := float32(3)
 		if i%5 == 0 {
@@ -219,9 +209,8 @@ func (a *app) instrTE(p *ui.Painter, r ui.Rect) {
 		}
 		x0, y0 := polar(s.cx, s.cy, rb, ang)
 		x1, y1 := polar(s.cx, s.cy, rb+l, ang)
-		tk.MoveTo(x0, y0).LineTo(x1, y1)
+		strokeLine(p, x0, y0, x1, y1, 1.2, ink.Alpha(.55))
 	}
-	p.StrokePath(&tk, 1.2, ink.Alpha(.55))
 	for i := 0; i < 10; i++ {
 		x, y := polar(s.cx, s.cy, rb+18, a0Top+float64(i)/10*tau)
 		centerText(p, x, y, fmt.Sprint(i), 10, 600, ink.Alpha(.7), "monospace")
@@ -249,29 +238,29 @@ func (a *app) paintAnalysis(p *ui.Painter, r ui.Rect) {
 		beam := a0Top + an.k*tau
 		if an.k < 1 && a.motion() {
 			// the wake: 1 rad behind the beam, fading out
+			// sectors, drawn by the fill shader in one call (see sectorFills)
 			const n = 24
+			for len(a.wake) < n {
+				a.wake = append(a.wake, &shape{})
+			}
 			for i := 0; i < n; i++ {
 				b0 := beam - float64(i+1)/n
 				if b0 < a0Top {
 					break
 				}
-				var w ui.Path
-				w.MoveTo(polar(s.cx, s.cy, s.r0, b0))
-				arcTo(w.LineTo(polar(s.cx, s.cy, s.rad, b0)), s.cx, s.cy, s.rad, b0, b0+1.0/n+.004)
-				arcTo(w.LineTo(polar(s.cx, s.cy, s.r0, b0+1.0/n+.004)), s.cx, s.cy, s.r0, b0+1.0/n+.004, b0)
-				w.Close()
-				p.FillPath(&w, c1.Alpha(.14*(1-float32(i)/n)))
+				b := float32(b0 - a0Top) // from 12 o'clock, as sectors take it
+				a.fills.fill(a.wake[i].sector(s.cx, s.cy, s.r0, s.rad, b, b+1.0/n+.004, 0), c1.Alpha(.14*(1-float32(i)/n)))
 			}
+			a.fills.draw(p, p.Accelerated())
 		}
-		// the beam: a line from the hole out past the bezel, brightening outwards
+		// the beam: a line from the hole out past the bezel, brightening outwards, piece by
+		// piece (see strokeLine)
 		x0, y0 := polar(s.cx, s.cy, s.r0, beam)
 		x1, y1 := polar(s.cx, s.cy, rb+40, beam)
 		const seg = 12
 		for i := 0; i < seg; i++ {
 			u0, u1 := float32(i)/seg, float32(i+1)/seg
-			var l ui.Path
-			l.MoveTo(x0+(x1-x0)*u0, y0+(y1-y0)*u0).LineTo(x0+(x1-x0)*u1, y0+(y1-y0)*u1)
-			p.StrokePath(&l, 1.5, c1.Alpha(.9*u1))
+			strokeLine(p, x0+(x1-x0)*u0, y0+(y1-y0)*u0, x0+(x1-x0)*u1, y0+(y1-y0)*u1, 1.5, c1.Alpha(.9*u1))
 		}
 		shown := 0
 		var tags [][2]float32
@@ -316,8 +305,10 @@ func (a *app) paintAnalysis(p *ui.Painter, r ui.Rect) {
 	}
 	if k := a.progress(a.pulse, 0, 700*time.Millisecond); k < 1 && !a.pulse.IsZero() {
 		e := float32(easeOut(k))
-		ring := circle(&ui.Path{}, s.cx, s.cy, s.r0+(rb+40-s.r0)*e, 0, tau)
-		p.StrokePath(ring, 2-float32(k)*1.5, c1.Alpha(.7*(1-float32(k))))
+		// a whole ring as wide as the stroke, by the fill shader (see sectorFills)
+		R, w := s.r0+(rb+40-s.r0)*e, 2-float32(k)*1.5
+		a.fills.fill(a.pulseRing.sector(s.cx, s.cy, R-w/2, R+w/2, 0, tau, 0), c1.Alpha(.7*(1-float32(k))))
+		a.fills.draw(p, p.Accelerated())
 		p.AnimationFrame()
 	}
 }

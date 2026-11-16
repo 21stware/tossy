@@ -39,7 +39,7 @@ type trashSun struct {
 	pre   string // the collapsed common folder
 	depth int
 	arcs  []tarc
-	paths []*ui.Path
+	paths []*shape
 	box   ui.Rect
 	t0    time.Time // ring-by-ring growth on entering
 	hl    *tnode    // under the pointer on the chart
@@ -218,12 +218,12 @@ func (a *app) paintTrashSun(p *ui.Painter, r ui.Rect) {
 	gap, cr := pal.gap, pal.corner
 	ts.arcs = ts.arcs[:0]
 	np := 0
-	newPath := func() *ui.Path {
+	newPath := func() *shape {
 		if np < len(ts.paths) {
 			np++
-			return ts.paths[np-1].Reset()
+			return ts.paths[np-1]
 		}
-		q := &ui.Path{}
+		q := &shape{}
 		ts.paths = append(ts.paths, q)
 		np++
 		return q
@@ -267,7 +267,7 @@ func (a *app) paintTrashSun(p *ui.Painter, r ui.Rect) {
 			}
 			padA := min(.8/r0, (a1-a0)*.2)
 			h := tarc{arc{a0: a0, a1: a1, r0: r0, r1: r1, ring: n.d, h: H, s: S, l: L, leaf: n.it != nil, size: n.size,
-				path: sector(newPath(), s.cx, s.cy, r0, r1, a0+padA, a1-padA, cr)}, n}
+				path: newPath().sector(s.cx, s.cy, r0, r1, a0+padA, a1-padA, cr)}, n}
 			h.label = g >= 1 && mk >= 1 && r1-r0 > 15 && (a1-a0)*(r0+r1)/2 > 54
 			ts.arcs = append(ts.arcs, h)
 		}
@@ -289,15 +289,20 @@ func (a *app) paintTrashSun(p *ui.Painter, r ui.Rect) {
 			}
 		}
 	}
-	for i := range ts.arcs {
-		h := &ts.arcs[i]
-		al := float32(1)
-		if hl != nil && !ts.under(h.n, hl) && !ts.under(hl, h.n) {
-			al = .22
+	for _, fills := range [2]bool{true, false} { // as the sunburst: the fills in one draw first
+		for i := range ts.arcs {
+			h := &ts.arcs[i]
+			al := float32(1)
+			if hl != nil && !ts.under(h.n, hl) && !ts.under(hl, h.n) {
+				al = .22
+			}
+			a.paintArc(p, &h.arc, h.h, h.s, h.l, al, fills)
+			if !fills && h.n == hl {
+				outline(p, h.path, 1.5, pal.text)
+			}
 		}
-		a.paintArc(p, &h.arc, h.h, h.s, h.l, al)
-		if h.n == hl {
-			p.StrokePath(h.path, 1.5, pal.text)
+		if fills {
+			a.fills.draw(p, p.Accelerated())
 		}
 	}
 	for i := range ts.arcs {

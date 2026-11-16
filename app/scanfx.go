@@ -97,42 +97,35 @@ func (a *app) paintScanWire(p *ui.Painter, cx, cy, rad float32, ang float64, ink
 	now := p.Now()
 	spin := float64(now.Sub(a.scanStart)) / float64(time.Second) * tau / 40
 	// tick ring just outside the radar, turning the other way to the beam
-	var tk, tl ui.Path
 	for i := 0; i < 72; i++ {
 		b := -spin + float64(i)*tau/72
 		c, s := float32(math.Cos(b)), float32(math.Sin(b))
 		r1 := rad + 6
 		if i%6 == 0 {
-			tl.MoveTo(cx+c*(r1), cy+s*(r1)).LineTo(cx+c*(r1+9), cy+s*(r1+9))
+			strokeLine(p, cx+c*(r1), cy+s*(r1), cx+c*(r1+9), cy+s*(r1+9), 1, ink.Alpha(.3))
 		} else {
-			tk.MoveTo(cx+c*(r1), cy+s*(r1)).LineTo(cx+c*(r1+4), cy+s*(r1+4))
+			strokeLine(p, cx+c*(r1), cy+s*(r1), cx+c*(r1+4), cy+s*(r1+4), 1, ink.Alpha(.14))
 		}
 	}
-	p.StrokePath(&tk, 1, ink.Alpha(.14))
-	p.StrokePath(&tl, 1, ink.Alpha(.3))
-	// crosshair and spokes, dashed
-	var ch ui.Path
+	// crosshair and spokes, dashed, piece by piece (see strokeLine)
 	for i := 0; i < 12; i++ {
 		b := float64(i) * tau / 12
 		c, s := float32(math.Cos(b)), float32(math.Sin(b))
 		for d := float32(14); d < rad; d += 9 {
 			e := min(rad, d+4)
-			ch.MoveTo(cx+c*d, cy+s*d).LineTo(cx+c*e, cy+s*e)
+			strokeLine(p, cx+c*d, cy+s*d, cx+c*e, cy+s*e, 1, ink.Alpha(.06))
 		}
 	}
-	p.StrokePath(&ch, 1, ink.Alpha(.06))
 	// corner brackets on the radar's square
-	var br ui.Path
 	e, l := rad+22, float32(14)
 	for _, q := range [4][2]float32{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}} {
 		x, y := cx+q[0]*e, cy+q[1]*e
+		var br ui.Path
 		br.MoveTo(x-q[0]*l, y).LineTo(x, y).LineTo(x, y-q[1]*l)
+		p.StrokePath(&br, 1.2, ink.Alpha(.32))
 	}
-	p.StrokePath(&br, 1.2, ink.Alpha(.32))
 	// the beam's edge
-	var bm ui.Path
-	bm.MoveTo(cx, cy).LineTo(cx+float32(math.Cos(ang))*rad, cy+float32(math.Sin(ang))*rad)
-	p.StrokePath(&bm, 1, ink.Alpha(.5))
+	strokeLine(p, cx, cy, cx+float32(math.Cos(ang))*rad, cy+float32(math.Sin(ang))*rad, 1, ink.Alpha(.5))
 	// blips: a dot where the beam passed, fading in blipLife
 	for _, b := range a.scanTxt.blips {
 		age := now.Sub(b.t0)
@@ -146,6 +139,21 @@ func (a *app) paintScanWire(p *ui.Painter, cx, cy, rad float32, ang float64, ink
 		d.Circle(x, y, 1.2+1.3*f)
 		p.FillPath(&d, ink.Alpha(.75*f))
 	}
+}
+
+// radarTrail fans n thin wedges of the disc of radius rad about (cx, cy) behind the beam at
+// ang (radians clockwise from the right), each width wide and step behind the one before,
+// fading from c at the beam: sectors from the centre, drawn by the fill shader in one call.
+func (a *app) radarTrail(p *ui.Painter, cx, cy, rad float32, ang float64, n int, step, width float64, c ui.Color) {
+	for len(a.trail) < n {
+		a.trail = append(a.trail, &shape{})
+	}
+	for i := 0; i < n; i++ {
+		b0 := float32(ang - float64(i)*step - width - a0Top) // from 12 o'clock, as sectors take it
+		sh := a.trail[i].sector(cx, cy, 0, rad, b0, b0+float32(width), 0)
+		a.fills.fill(sh, c.Alpha(1-float32(i)/float32(n)))
+	}
+	a.fills.draw(p, p.Accelerated())
 }
 
 // A rescan with a tree on screen plays on the sunburst itself: a faint beam turns over the
@@ -195,18 +203,8 @@ func (a *app) paintRescan(p *ui.Painter, r ui.Rect) {
 	}
 	ang := float64(now.Sub(a.scanStart)) / float64(time.Second) * tau / 2.4
 	// the beam: a thin fan over the rings, under the lit arcs
-	for i := 0; i < 16; i++ {
-		b := ang - float64(i)*.03
-		var w ui.Path
-		w.MoveTo(s.cx, s.cy)
-		w.LineTo(s.cx+float32(math.Cos(b))*s.rad, s.cy+float32(math.Sin(b))*s.rad)
-		arcTo(&w, s.cx, s.cy, s.rad, b, b-.031)
-		w.Close()
-		p.FillPath(&w, ink.Alpha(.07*(1-float32(i)/16)))
-	}
-	var bm ui.Path
-	bm.MoveTo(s.cx, s.cy).LineTo(s.cx+float32(math.Cos(ang))*(s.rad+10), s.cy+float32(math.Sin(ang))*(s.rad+10))
-	p.StrokePath(&bm, 1, ink.Alpha(.45))
+	a.radarTrail(p, s.cx, s.cy, s.rad, ang, 16, .03, .031, ink.Alpha(.07))
+	strokeLine(p, s.cx, s.cy, s.cx+float32(math.Cos(ang))*(s.rad+10), s.cy+float32(math.Sin(ang))*(s.rad+10), 1, ink.Alpha(.45))
 	for _, h := range s.arcs {
 		t0, ok := fx.lit[h.node]
 		if !ok || h.path == nil {
@@ -218,8 +216,8 @@ func (a *app) paintRescan(p *ui.Painter, r ui.Rect) {
 			continue
 		}
 		f := 1 - float32(easeOut(float64(age)/float64(rescanGlow)))
-		p.FillPath(h.path, ink.Alpha(.16*f))
-		p.StrokePath(h.path, 1.5, ink.Alpha(.8*f))
+		p.FillPath(&h.path.Path, ink.Alpha(.16*f))
+		p.StrokePath(&h.path.Path, 1.5, ink.Alpha(.8*f))
 	}
 	// the readout along the foot
 	y := r.Y + r.H - 22

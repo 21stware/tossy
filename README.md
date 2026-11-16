@@ -124,6 +124,15 @@ The screenshots in this README are rendered headlessly by a test, in English, fr
 cd app && TOSSY_README_SHOTS=$PWD/../docs/screenshots go test -run TestReadmeShots .
 ```
 
+## Rendering
+
+The chart is drawn so that MyGo never needs a coverage mask for it, which keeps every frame on the GPU:
+
+- **Sectors** (fill, glow and outline) are drawn by one instanced shader that computes the signed distance to a rounded annular sector, in [app/sectors.go](app/sectors.go). The radar trail, the analysis wake and its pulse ring use the same shader. Without a GPU, the same shapes are drawn as paths.
+- **Lines and decorations** (ticks, dashed rings, grids, frames, scanlines) are drawn as opaque polylines or single segments, which also need no mask. Shapes that still need a path, such as dots or brackets, are drawn one small path at a time; see [app/pieces.go](app/pieces.go).
+
+MyGo v0.9.0 dropped paths when a frame's masks overflowed its atlas, which made the chart flicker ([egoist/mygo#1841](https://github.com/egoist/mygo/issues/1841)). v0.9.1 draws the overflow on the CPU instead, and Tossy requires it, but the chart no longer depends on that fallback. `go test ./app` checks the shader against the path renderer pixel for pixel.
+
 ## Where data lives
 
 Tossy keeps its state (the trash journal, `habits.json` and `settings.json`) in a `Tossy` folder in the user config directory:

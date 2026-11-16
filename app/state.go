@@ -34,9 +34,13 @@ const (
 // app is the window's state. The view reads it on the main thread; background work changes it
 // through win.Update.
 type app struct {
-	win    *mygo.Window
-	setWin *mygo.Window // the settings window while open
-	pal    *palette
+	win       *mygo.Window
+	setWin    *mygo.Window // the settings window while open
+	pal       *palette
+	fills     sectorFills // the chart's sector fills of the frame being painted
+	trail     []*shape    // the radar's wedges (radarTrail)
+	wake      []*shape    // the analysis' wake (paintAnalysis)
+	pulseRing shape       // the ring pulsing out when the analysis is done
 
 	// scan
 	root     string

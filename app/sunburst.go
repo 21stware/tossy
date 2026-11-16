@@ -33,7 +33,7 @@ type arc struct {
 	leaf    bool
 	label   bool
 	lv      safety.Level
-	path    *ui.Path
+	path    *shape
 }
 
 type view struct{ x0, x1, d float64 }
@@ -51,7 +51,7 @@ type geoKey struct {
 type sunburst struct {
 	arcs  []arc
 	key   geoKey
-	paths []*ui.Path // reused path storage
+	paths []*shape // reused path storage
 
 	box                 ui.Rect
 	cx, cy, rad, r0, rw float32
@@ -61,7 +61,8 @@ type sunburst struct {
 	zooming bool
 	intro   time.Time
 	cur     view
-	wash    float32 // blueprint: how much of the fills show (see washK)
+	wash    float32      // blueprint: how much of the fills show (see washK)
+	guide   [][2]float32 // the guide rings' points, reused
 
 	// morph: after a removal or restore, arcs slide from where they were to the new layout
 	prev map[int32][2]float32
@@ -124,7 +125,7 @@ func (a *app) applyMorph() {
 		}
 		ar.label = false
 		padA := min(.8/ar.r0, (ar.a1-ar.a0)*.2)
-		ar.path = sector(ar.path.Reset(), s.cx, s.cy, ar.r0, ar.r1, ar.a0+padA, ar.a1-padA, cr)
+		ar.path.sector(s.cx, s.cy, ar.r0, ar.r1, ar.a0+padA, ar.a1-padA, cr)
 		keep = append(keep, ar)
 	}
 	s.arcs = keep
@@ -232,13 +233,13 @@ func (a *app) layout(v view, r ui.Rect, intro float64) {
 	total := float64(max(t.Nodes[0].Size, 1))
 	k := tau / max(1e-12, v.x1-v.x0)
 	np := 0
-	newPath := func() *ui.Path {
+	newPath := func() *shape {
 		if np < len(s.paths) {
 			p := s.paths[np]
 			np++
-			return p.Reset()
+			return p
 		}
-		p := &ui.Path{}
+		p := &shape{}
 		s.paths = append(s.paths, p)
 		np++
 		return p
@@ -269,7 +270,7 @@ func (a *app) layout(v view, r ui.Rect, intro float64) {
 				ar.label = g >= 1 && r1-r0 > 15 && (b1-b0)*(r0+r1)/2 > 54
 				padA := min(.8/r0, (b1-b0)*.2)
 				ar.lv = a.ev.Verdict(n).Level()
-				ar.path = sector(newPath(), s.cx, s.cy, r0, r1, b0+padA, b1-padA, cr)
+				ar.path = newPath().sector(s.cx, s.cy, r0, r1, b0+padA, b1-padA, cr)
 				s.arcs = append(s.arcs, ar)
 			}
 		}
@@ -297,7 +298,7 @@ func (a *app) layout(v view, r ui.Rect, intro float64) {
 					}
 					padA := min(.8/r0, (g1-g0)*.2)
 					s.arcs = append(s.arcs, arc{node: scan.None, parent: n, count: cnt, size: sz, a0: g0, a1: g1, r0: r0, r1: r1, ring: int(math.Round(ringA)),
-						path: sector(newPath(), s.cx, s.cy, r0, r1, g0+padA, g1-padA, cr)})
+						path: newPath().sector(s.cx, s.cy, r0, r1, g0+padA, g1-padA, cr)})
 				}
 				break
 			}
@@ -366,41 +367,6 @@ func (a *app) arcColor(n int32, t float32, ring float32, idx int) (h, s, l float
 		}
 	}
 	return
-}
-
-// sector builds an annular sector with softly rounded corners. Angles are clockwise from 12 o'clock.
-func sector(p *ui.Path, cx, cy, r0, r1, b0, b1, corner float32) *ui.Path {
-	s0, s1 := float64(a0Top+b0), float64(a0Top+b1)
-	pt := func(r float32, ang float64) (float32, float32) {
-		return cx + float32(math.Cos(ang))*r, cy + float32(math.Sin(ang))*r
-	}
-	cr := min(corner, (r1-r0)/2.5, (b1-b0)*r0/2.5)
-	if cr < 1 {
-		p.MoveTo(pt(r1, s0))
-		arcTo(p, cx, cy, r1, s0, s1)
-		p.LineTo(pt(r0, s1))
-		arcTo(p, cx, cy, r0, s1, s0)
-		return p.Close()
-	}
-	dO, dI := float64(cr/r1), float64(cr/r0)
-	p.MoveTo(pt(r0+cr, s0))
-	p.LineTo(pt(r1-cr, s0))
-	qx, qy := pt(r1, s0)
-	ex, ey := pt(r1, s0+dO)
-	p.QuadTo(qx, qy, ex, ey)
-	arcTo(p, cx, cy, r1, s0+dO, s1-dO)
-	qx, qy = pt(r1, s1)
-	ex, ey = pt(r1-cr, s1)
-	p.QuadTo(qx, qy, ex, ey)
-	p.LineTo(pt(r0+cr, s1))
-	qx, qy = pt(r0, s1)
-	ex, ey = pt(r0, s1-dI)
-	p.QuadTo(qx, qy, ex, ey)
-	arcTo(p, cx, cy, r0, s1-dI, s0+dI)
-	qx, qy = pt(r0, s0)
-	ex, ey = pt(r0+cr, s0)
-	p.QuadTo(qx, qy, ex, ey)
-	return p.Close()
 }
 
 // arcTo appends a circular arc (the current point must be at its start) as cubic Béziers of ≤ 90°.
@@ -508,11 +474,17 @@ func (a *app) paintSun(p *ui.Painter, r ui.Rect) {
 	}
 	// guide rings
 	if pal.instr != instrNone {
-		var g ui.Path
+		s.guide = s.guide[:0]
 		for i := 0; i <= rings; i++ {
-			circle(&g, s.cx, s.cy, s.r0+float32(i)*s.rw+.5, 0, tau)
+			r := s.r0 + float32(i)*s.rw + .5
+			n := max(8, int(math.Ceil(tau/(2*math.Sqrt(2*.1/float64(r))))))
+			for k := 0; k <= n; k++ {
+				ang := tau * float64(k) / float64(n)
+				s.guide = append(s.guide, [2]float32{s.cx + float32(math.Cos(ang))*r, s.cy + float32(math.Sin(ang))*r})
+			}
+			s.guide = append(s.guide, [2]float32{float32(math.NaN()), 0}) // a break between rings
 		}
-		p.StrokePath(&g, 1, pal.ink.Alpha(.07))
+		p.StrokePolyline(s.guide, 1, over(pal.ink.Alpha(.07), a.ground()))
 	}
 
 	dim := a.hover != scan.None
@@ -529,31 +501,39 @@ func (a *app) paintSun(p *ui.Painter, r ui.Rect) {
 	if a.anal != nil {
 		sweep = float32(a.anal.k) * tau
 	}
-	for i := range s.arcs {
-		h := &s.arcs[i]
-		node := h.node
-		if node == scan.None {
-			node = h.parent
-		}
-		alpha := float32(1)
-		if dim && !a.isUnder(node, a.hover) {
-			alpha = .35
-		}
-		if hl != nil && !a.underAny(node, hl) {
-			alpha *= hlA
-		}
-		if h.node == scan.None {
-			p.FillPath(h.path, pal.agg.Alpha(alpha))
-			if pal.holo() || pal.art == artPlate || pal.art == artInk || pal.art == artToon {
-				p.StrokePath(h.path, .6, pal.ink.Alpha(.18*alpha))
+	// two passes: every fill in one draw (see sectorFills), then what goes over them
+	for _, fills := range [2]bool{true, false} {
+		for i := range s.arcs {
+			h := &s.arcs[i]
+			node := h.node
+			if node == scan.None {
+				node = h.parent
 			}
-			continue
+			alpha := float32(1)
+			if dim && !a.isUnder(node, a.hover) {
+				alpha = .35
+			}
+			if hl != nil && !a.underAny(node, hl) {
+				alpha *= hlA
+			}
+			switch {
+			case h.node == scan.None:
+				if fills {
+					sp := sectorPaint{fill: pal.agg.Alpha(alpha)}
+					if pal.holo() || pal.art == artPlate || pal.art == artInk || pal.art == artToon {
+						sp.line = stroke{.6, pal.ink.Alpha(.18 * alpha)}
+					}
+					a.fills.add(h.path, sp)
+				}
+			case (h.a0+h.a1)/2 > sweep:
+				a.paintArc(p, h, 0, 0, a.unsweptL(), alpha*.8, fills)
+			default:
+				a.paintArc(p, h, h.h, h.s, h.l, alpha, fills)
+			}
 		}
-		if (h.a0+h.a1)/2 > sweep {
-			a.paintArc(p, h, 0, 0, a.unsweptL(), alpha*.8)
-			continue
+		if fills {
+			a.fills.draw(p, p.Accelerated())
 		}
-		a.paintArc(p, h, h.h, h.s, h.l, alpha)
 	}
 
 	a.paintLabels(p)
@@ -565,7 +545,7 @@ func (a *app) paintSun(p *ui.Painter, r ui.Rect) {
 	}
 	for i := range s.arcs {
 		if h := &s.arcs[i]; h.node == a.selected && a.selected != a.focus {
-			p.StrokePath(h.path, w, pal.text)
+			outline(p, h.path, w, pal.text)
 		}
 	}
 
@@ -580,32 +560,27 @@ func (a *app) unsweptL() float32 {
 	return 84
 }
 
-// paintArc paints one sector in the style's manner.
-func (a *app) paintArc(p *ui.Painter, h *arc, H, S, L, alpha float32) {
+// arcPaint is how a sector is painted in the style's manner: its fill and outlines.
+func (a *app) arcPaint(h *arc, H, S, L, alpha float32) sectorPaint {
 	pal := a.pal
 	switch pal.art {
-	case artSolid:
-		p.FillPath(h.path, hsl(H, S, L, alpha))
 	case artHolo:
 		fa, sa := float32(.26), float32(.9)
 		if h.leaf {
 			fa, sa = .16, .55
 		}
-		p.FillPath(h.path, hsl(H, S, L*.8, fa*alpha))
-		p.StrokePath(h.path, .9, hsl(H, min(100, S+12), min(86, L+14), sa*alpha))
+		return sectorPaint{fill: hsl(H, S, L*.8, fa*alpha), line: stroke{.9, hsl(H, min(100, S+12), min(86, L+14), sa*alpha)}}
 	case artPlate:
-		p.FillPath(h.path, hsl(H, S, L, alpha))
 		wa, w := float32(.62), float32(.9)
 		if h.leaf {
 			wa, w = .32, .6
 		}
-		p.StrokePath(h.path, w, pal.ink.Alpha(wa*alpha))
+		return sectorPaint{fill: hsl(H, S, L, alpha), line: stroke{w, pal.ink.Alpha(wa * alpha)}}
 	case artBlueprint:
 		fill := ui.RGBA(255, 255, 255, (.06+float32(h.ring)*.016)*alpha*a.sun.wash)
 		if a.mode == modeSafety {
 			fill = hsl(H, S, L, .22*alpha*a.sun.wash)
 		}
-		p.FillPath(h.path, fill)
 		sa, w := float32(.95), float32(1.1)
 		if h.leaf {
 			sa, w = .55, .8
@@ -614,39 +589,54 @@ func (a *app) paintArc(p *ui.Painter, h *arc, H, S, L, alpha float32) {
 		if a.mode == modeSafety {
 			edge = hsl(H, S, min(92, L+10), 1)
 		}
-		p.StrokePath(h.path, w, edge.Alpha(sa*alpha))
+		return sectorPaint{fill: fill, line: stroke{w, edge.Alpha(sa * alpha)}}
 	case artPhosphor:
-		p.FillPath(h.path, hsl(H, S, L*.6, .12*alpha))
 		ea := float32(.9)
 		if h.leaf {
 			ea = .5
 		}
-		p.StrokePath(h.path, 3.2, hsl(H, S, L, .1*alpha*ea))
-		p.StrokePath(h.path, .9, hsl(H, S, min(80, L+12), ea*alpha))
+		return sectorPaint{fill: hsl(H, S, L*.6, .12*alpha), glow: stroke{3.2, hsl(H, S, L, .1*alpha*ea)}, line: stroke{.9, hsl(H, S, min(80, L+12), ea*alpha)}}
 	case artTE:
-		p.FillPath(h.path, hsl(H, S, L, alpha))
-		p.StrokePath(h.path, .7, pal.ink.Alpha(.22*alpha))
+		return sectorPaint{fill: hsl(H, S, L, alpha), line: stroke{.7, pal.ink.Alpha(.22 * alpha)}}
 	case artInk:
-		p.FillPath(h.path, hsl(0, 0, L, alpha))
-		if a.mode == modeSafety && (h.lv == 1 || h.lv == 2) {
-			hatch(p, h.path, h.lv == 2, pal.ink.Alpha(.26*alpha))
-		}
-		p.StrokePath(h.path, .8, pal.ink.Alpha(.85*alpha))
+		return sectorPaint{fill: hsl(0, 0, L, alpha), line: stroke{.8, pal.ink.Alpha(.85 * alpha)}}
 	case artToon:
-		p.FillPath(h.path, hsl(H, S, L, alpha))
-		if !h.leaf {
-			a.shine(p, h, alpha)
-		}
 		w, wa := float32(1.8), float32(.92)
 		if h.leaf {
 			w, wa = 1.1, .6
 		}
-		p.StrokePath(h.path, w, pal.ink.Alpha(wa*alpha))
+		return sectorPaint{fill: hsl(H, S, L, alpha), line: stroke{w, pal.ink.Alpha(wa * alpha)}}
+	}
+	return sectorPaint{fill: hsl(H, S, L, alpha)}
+}
+
+// paintArc paints one sector in the style's manner: in the first pass its fill and outlines
+// (into a.fills, see sectorFills); in the second, what some styles draw over them.
+func (a *app) paintArc(p *ui.Painter, h *arc, H, S, L, alpha float32, fills bool) {
+	if fills {
+		a.fills.add(h.path, a.arcPaint(h, H, S, L, alpha))
+		return
+	}
+	switch a.pal.art {
+	case artInk:
+		if a.mode == modeSafety && (h.lv == 1 || h.lv == 2) {
+			hatch(p, &h.path.Path, h.lv == 2, a.pal.ink.Alpha(.26*alpha))
+		}
+	case artToon:
+		if !h.leaf {
+			a.shine(p, h, alpha, a.on(a.arcPaint(h, H, S, L, alpha).fill))
+		}
 	}
 }
 
+// ground is the opaque colour under the chart: the style's background.
+func (a *app) ground() ui.Color { bg := a.pal.bg; return ui.RGBA(bg.R, bg.G, bg.B, 1) }
+
+// on is what shows where c is painted on the ground.
+func (a *app) on(c ui.Color) ui.Color { return over(c, a.ground()) }
+
 // shine is a cartoon cel's highlight: a short white stroke along the outer edge and a dot after it.
-func (a *app) shine(p *ui.Painter, h *arc, alpha float32) {
+func (a *app) shine(p *ui.Painter, h *arc, alpha float32, under ui.Color) {
 	s := &a.sun
 	th := h.r1 - h.r0
 	span := (h.a1 - h.a0) * h.r1
@@ -657,11 +647,13 @@ func (a *app) shine(p *ui.Painter, h *arc, alpha float32) {
 	pad := 9 / r
 	b0 := float64(a0Top + h.a0 + pad)
 	b1 := b0 + float64(min(h.a1-h.a0-2*pad, 46/r)*.62)
-	var l ui.Path
-	arcTo(l.MoveTo(s.cx+float32(math.Cos(b0))*r, s.cy+float32(math.Sin(b0))*r), s.cx, s.cy, r, b0, b1)
-	l.Cap(ui.RoundCap)
+	var l [12][2]float32 // round caps, as StrokePolyline's
+	for i := range l {
+		ang := b0 + (b1-b0)*float64(i)/float64(len(l)-1)
+		l[i] = [2]float32{s.cx + float32(math.Cos(ang))*r, s.cy + float32(math.Sin(ang))*r}
+	}
 	w := min(3.2, th*.14)
-	p.StrokePath(&l, w, ui.RGBA(255, 255, 255, .7*alpha))
+	p.StrokePolyline(l[:], w, over(ui.RGBA(255, 255, 255, .7*alpha), under))
 	d := b1 + float64(w*1.6/r)
 	if d < float64(a0Top+h.a1-pad) {
 		p.FillPath((&ui.Path{}).Circle(s.cx+float32(math.Cos(d))*r, s.cy+float32(math.Sin(d))*r, w*.55), ui.RGBA(255, 255, 255, .7*alpha))
@@ -689,52 +681,49 @@ func (a *app) paintDeco(p *ui.Painter, r ui.Rect) {
 	pal := a.pal
 	switch pal.deco {
 	case decoGrid:
-		var minor, major ui.Path
-		for x := r.X + float32(math.Mod(float64(r.W/2), 16)); x < r.X+r.W; x += 16 {
-			minor.MoveTo(x, r.Y).LineTo(x, r.Y+r.H)
-		}
-		for y := r.Y + float32(math.Mod(float64(r.H/2), 16)); y < r.Y+r.H; y += 16 {
-			minor.MoveTo(r.X, y).LineTo(r.X+r.W, y)
-		}
-		for x := r.X + float32(math.Mod(float64(r.W/2), 80)); x < r.X+r.W; x += 80 {
-			major.MoveTo(x, r.Y).LineTo(x, r.Y+r.H)
-		}
-		for y := r.Y + float32(math.Mod(float64(r.H/2), 80)); y < r.Y+r.H; y += 80 {
-			major.MoveTo(r.X, y).LineTo(r.X+r.W, y)
-		}
-		p.StrokePath(&minor, 1, pal.ink.Alpha(.05))
-		p.StrokePath(&major, 1, pal.ink.Alpha(.1))
-		a.sheetFrame(p, r)
-	case decoDots:
-		var d ui.Path
-		for y := r.Y + 9; y < r.Y+r.H; y += 18 {
-			for x := r.X + 9; x < r.X+r.W; x += 18 {
-				d.MoveTo(x-.8, y-.8).LineTo(x+.8, y-.8).LineTo(x+.8, y+.8).LineTo(x-.8, y+.8).Close()
+		// lines as rectangles (see strokeLine), opaque so that crossings do not show darker: in
+		// the colour each line showed on the paper, a major line on a minor one under it
+		minor := over(pal.ink.Alpha(.05), a.ground())
+		major := over(pal.ink.Alpha(.1), minor)
+		for _, g := range [2]struct {
+			step float64
+			c    ui.Color
+		}{{16, minor}, {80, major}} {
+			for x := r.X + float32(math.Mod(float64(r.W/2), g.step)); x < r.X+r.W; x += float32(g.step) {
+				vLine(p, x, r.Y, r.Y+r.H, 1, g.c)
+			}
+			for y := r.Y + float32(math.Mod(float64(r.H/2), g.step)); y < r.Y+r.H; y += float32(g.step) {
+				hLine(p, r.X, r.X+r.W, y, 1, g.c)
 			}
 		}
-		p.FillPath(&d, pal.ink.Alpha(.16))
-	case decoPolka:
-		var d ui.Path
+		a.sheetFrame(p, r)
+	case decoDots: // each dot a path of its own (see strokeLine)
+		for y := r.Y + 9; y < r.Y+r.H; y += 18 {
+			for x := r.X + 9; x < r.X+r.W; x += 18 {
+				var d ui.Path
+				p.FillPath(d.MoveTo(x-.8, y-.8).LineTo(x+.8, y-.8).LineTo(x+.8, y+.8).LineTo(x-.8, y+.8).Close(), pal.ink.Alpha(.16))
+			}
+		}
+	case decoPolka: // each dot a path of its own (see strokeLine)
 		row := 0
 		for y := r.Y + 14; y < r.Y+r.H+20; y += 30 {
 			off := float32(row&1) * 26
 			for x := r.X + 14 + off; x < r.X+r.W+20; x += 52 {
-				d.Circle(x, y, 5)
+				var d ui.Path
+				p.FillPath(d.Circle(x, y, 5), pal.accent.Alpha(.07))
 			}
 			row++
 		}
-		p.FillPath(&d, pal.accent.Alpha(.07))
-	case decoHearts:
-		var d ui.Path
+	case decoHearts: // each heart a path of its own (see strokeLine)
 		row := 0
 		for y := r.Y + 18; y < r.Y+r.H+24; y += 40 {
 			off := float32(row&1) * 34
 			for x := r.X + 18 + off; x < r.X+r.W+24; x += 68 {
-				heart(&d, x, y, 7)
+				var d ui.Path
+				p.FillPath(heart(&d, x, y, 7), pal.accent.Alpha(.08))
 			}
 			row++
 		}
-		p.FillPath(&d, pal.accent.Alpha(.08))
 	case decoPaint:
 		paintSplashes(p, r, 1, .1)
 	}
@@ -744,10 +733,10 @@ func (a *app) paintDeco(p *ui.Painter, r ui.Rect) {
 var splashPaints = [...]ui.Color{ui.Hex("#22a386"), ui.Hex("#ffb627"), ui.Hex("#ef5b6a"), ui.Hex("#3f8fe0"), ui.Hex("#a873d9")}
 
 // paintSplashes scatters paint blobs, each with a couple of drops, at fixed pseudo-random spots
-// on a cell grid, so they stay put as the window resizes.
+// on a cell grid, so they stay put as the window resizes. Each splash is a path of its own (see
+// strokeLine).
 func paintSplashes(p *ui.Painter, r ui.Rect, scale, alpha float32) {
 	cell := 96 * scale
-	var paths [len(splashPaints)]ui.Path
 	for gy := 0; float32(gy)*cell < r.H; gy++ {
 		for gx := 0; float32(gx)*cell < r.W; gx++ {
 			n := uint32(gx*73856093 ^ gy*19349663)
@@ -761,7 +750,7 @@ func paintSplashes(p *ui.Painter, r ui.Rect, scale, alpha float32) {
 			x := r.X + (float32(gx)+.15+.7*f(0))*cell
 			y := r.Y + (float32(gy)+.15+.7*f(8))*cell
 			rad := (4 + 6*f(16)) * scale
-			d := &paths[int(n>>24)%len(splashPaints)]
+			var d ui.Path
 			d.Circle(x, y, rad)
 			ang := float64(f(4)) * tau
 			for k := 0; k < 3; k++ {
@@ -769,10 +758,8 @@ func paintSplashes(p *ui.Painter, r ui.Rect, scale, alpha float32) {
 				dist := rad * (1.5 + .5*float32(k))
 				d.Circle(x+float32(math.Cos(a))*dist, y+float32(math.Sin(a))*dist, rad*(.32-.07*float32(k)))
 			}
+			p.FillPath(&d, splashPaints[int(n>>24)%len(splashPaints)].Alpha(alpha))
 		}
-	}
-	for i := range paths {
-		p.FillPath(&paths[i], splashPaints[i].Alpha(alpha))
 	}
 }
 
@@ -791,21 +778,17 @@ func heart(p *ui.Path, x, y, s float32) *ui.Path {
 func (a *app) sheetFrame(p *ui.Painter, r ui.Rect) {
 	ink := a.pal.ink
 	const o, i = 5, 15 // outer and inner insets
-	rect := func(path *ui.Path, in float32) *ui.Path {
-		x0, y0, x1, y1 := r.X+in, r.Y+in, r.X+r.W-in, r.Y+r.H-in
-		return path.MoveTo(x0, y0).LineTo(x1, y0).LineTo(x1, y1).LineTo(x0, y1).Close()
-	}
 	// paper outside the inner line: the grid only shows inside the frame
-	p.ClipPath(rect(&ui.Path{}, 0), func() {
+	p.Clip(r, 0, func() {
 		p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: i}, a.pal.bg, 0)
 		p.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - i, W: r.W, H: i}, a.pal.bg, 0)
 		p.Fill(ui.Rect{X: r.X, Y: r.Y, W: i, H: r.H}, a.pal.bg, 0)
 		p.Fill(ui.Rect{X: r.X + r.W - i, Y: r.Y, W: i, H: r.H}, a.pal.bg, 0)
 	})
-	p.StrokePath(rect(&ui.Path{}, o), 1.6, ink.Alpha(.75))
-	p.StrokePath(rect(&ui.Path{}, i), .8, ink.Alpha(.55))
+	inset := func(in float32) ui.Rect { return ui.Rect{X: r.X + in, Y: r.Y + in, W: r.W - 2*in, H: r.H - 2*in} }
+	strokeRect(p, inset(o), 1.6, ink.Alpha(.75)) // borders, not paths round the sheet (see strokeLine)
+	strokeRect(p, inset(i), .8, ink.Alpha(.55))
 	// zones: letters across, numbers down, about every 150 DIPs
-	var tk ui.Path
 	nx := max(2, int((r.W-2*i)/150))
 	ny := max(2, int((r.H-2*i)/150))
 	zw, zh := (r.W-2*i)/float32(nx), (r.H-2*i)/float32(ny)
@@ -813,7 +796,8 @@ func (a *app) sheetFrame(p *ui.Painter, r ui.Rect) {
 	for k := 0; k < nx; k++ {
 		x := r.X + i + float32(k)*zw
 		if k > 0 {
-			tk.MoveTo(x, r.Y+o).LineTo(x, r.Y+i).MoveTo(x, r.Y+r.H-i).LineTo(x, r.Y+r.H-o)
+			vLine(p, x, r.Y+o, r.Y+i, .8, ink.Alpha(.55))
+			vLine(p, x, r.Y+r.H-i, r.Y+r.H-o, .8, ink.Alpha(.55))
 		}
 		l := string(rune('A' + k%26))
 		centerText(p, x+zw/2, r.Y+mid, l, 7.5, 500, ink.Alpha(.6), "monospace")
@@ -822,13 +806,13 @@ func (a *app) sheetFrame(p *ui.Painter, r ui.Rect) {
 	for k := 0; k < ny; k++ {
 		y := r.Y + i + float32(k)*zh
 		if k > 0 {
-			tk.MoveTo(r.X+o, y).LineTo(r.X+i, y).MoveTo(r.X+r.W-i, y).LineTo(r.X+r.W-o, y)
+			hLine(p, r.X+o, r.X+i, y, .8, ink.Alpha(.55))
+			hLine(p, r.X+r.W-i, r.X+r.W-o, y, .8, ink.Alpha(.55))
 		}
 		n := fmt.Sprint(ny - k)
 		centerText(p, r.X+mid, y+zh/2, n, 7.5, 500, ink.Alpha(.6), "monospace")
 		centerText(p, r.X+r.W-mid, y+zh/2, n, 7.5, 500, ink.Alpha(.6), "monospace")
 	}
-	p.StrokePath(&tk, .8, ink.Alpha(.55))
 }
 
 // paintScreen draws effects over the whole chart (CRT scanlines and vignette).
@@ -836,11 +820,9 @@ func (a *app) paintScreen(p *ui.Painter, r ui.Rect) {
 	if a.pal.deco != decoScan {
 		return
 	}
-	var l ui.Path
-	for y := r.Y + 1; y < r.Y+r.H; y += 3 {
-		l.MoveTo(r.X, y).LineTo(r.X+r.W, y)
+	for y := r.Y + 1; y < r.Y+r.H; y += 3 { // rectangles, not a path over the window (see strokeLine)
+		hLine(p, r.X, r.X+r.W, y, 1, ui.RGBA(0, 0, 0, .28))
 	}
-	p.StrokePath(&l, 1, ui.RGBA(0, 0, 0, .28))
 	p.FillRadialGradient(r, ui.RadialGradient{
 		Center: ui.Point{X: .5, Y: .5}, Radius: .75,
 		Stops: []ui.GradientStop{{Color: ui.RGBA(0, 0, 0, 0), At: .55}, {Color: ui.RGBA(0, 0, 0, .55), At: 1}},
