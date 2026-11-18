@@ -105,6 +105,30 @@ var catalog = map[string][3]string{
 
 	// ---------------------------------------------------------------- list, detail
 	"此文件夹为空": {"This folder is empty", "此資料夾是空的", "このフォルダは空です"},
+
+	// ---------------------------------------------------------------- the developer's view (lens.go)
+	"磁盘":  {"Disk", "磁碟", "ディスク"},
+	"开发者": {"Developer", "開發者", "開発者"},
+	"磁盘视角：扫描范围里的全部内容（%s 切换）":        {"Disk view: everything in the scan (%s to switch)", "磁碟視角：掃描範圍裡的全部內容（%s 切換）", "ディスク表示：スキャン範囲のすべて（%s で切り替え）"},
+	"开发者视角：只看依赖、构建产物、缓存、模拟器（%s 切换）": {"Developer view: only dependencies, build output, caches and emulators (%s to switch)", "開發者視角：只看相依套件、建置產物、快取、模擬器（%s 切換）", "開発者表示：依存関係・ビルド成果物・キャッシュ・エミュレータだけ（%s で切り替え）"},
+	"模拟器与设备": {"Emulators & devices", "模擬器與裝置", "エミュレータとデバイス"},
+	"容器与虚拟机": {"Containers & VMs", "容器與虛擬機", "コンテナと仮想マシン"},
+	"本地模型":   {"Local models", "本機模型", "ローカルモデル"},
+	"应用缓存":   {"App cache", "應用程式快取", "アプリのキャッシュ"},
+	"装进项目里的依赖（node_modules、Pods、虚拟环境等），可用安装命令重新获取":          {"Dependencies installed into projects (node_modules, Pods, virtualenvs); an install command brings them back", "裝進專案裡的相依套件（node_modules、Pods、虛擬環境等），可用安裝指令重新取得", "プロジェクトに入れた依存関係（node_modules、Pods、仮想環境など）。インストールコマンドで取り直せます"},
+	"项目里的构建输出与打包结果（target、dist、.next 等），重新构建即可生成":           {"Build output and bundles inside projects (target, dist, .next); a rebuild regenerates them", "專案裡的建置輸出與打包結果（target、dist、.next 等），重新建置即可產生", "プロジェクト内のビルド出力とバンドル（target、dist、.next など）。再ビルドで生成されます"},
+	"编译器与工具的缓存（DerivedData、go-build、ccache 等），只影响下一次构建的速度":  {"Compiler and tool caches (DerivedData, go-build, ccache); removing them only slows the next build", "編譯器與工具的快取（DerivedData、go-build、ccache 等），只影響下一次建置的速度", "コンパイラやツールのキャッシュ（DerivedData、go-build、ccache など）。次のビルドが遅くなるだけです"},
+	"包管理器的下载缓存（npm、Cargo、Go 模块、Gradle、Homebrew 等），需要时会重新下载": {"Package managers' download caches (npm, Cargo, Go modules, Gradle, Homebrew); downloaded again when needed", "套件管理器的下載快取（npm、Cargo、Go 模組、Gradle、Homebrew 等），需要時會重新下載", "パッケージマネージャのダウンロードキャッシュ（npm、Cargo、Go モジュール、Gradle、Homebrew など）。必要なときに再ダウンロードされます"},
+	"Android 模拟器（AVD）、iOS 模拟器与设备支持文件，删除后需重新创建或下载":           {"Android emulators (AVD), iOS simulators and device support files; recreate or download them again after deleting", "Android 模擬器（AVD）、iOS 模擬器與裝置支援檔案，刪除後需重新建立或下載", "Android エミュレータ（AVD）、iOS シミュレータ、デバイスサポートファイル。削除後は作り直すか再ダウンロードが必要です"},
+	"Docker、Colima 等的虚拟磁盘，含镜像与数据卷，删除前请确认不再需要":               {"Virtual disks of Docker, Colima and the like, holding images and volumes; make sure you no longer need them", "Docker、Colima 等的虛擬磁碟，含映像檔與資料卷，刪除前請確認不再需要", "Docker や Colima などの仮想ディスク。イメージとボリュームを含みます。不要か確認してから削除してください"},
+	"本地大模型与预训练权重（Ollama、Hugging Face 等），删除后需重新下载":           {"Local models and pretrained weights (Ollama, Hugging Face); download them again after deleting", "本機大模型與預訓練權重（Ollama、Hugging Face 等），刪除後需重新下載", "ローカルの大規模モデルと学習済みの重み（Ollama、Hugging Face など）。削除後は再ダウンロードが必要です"},
+	"应用留在缓存目录里的内容，删除后应用会按需重建":                               {"What apps keep in the cache folders; they rebuild it on demand", "應用程式留在快取目錄裡的內容，刪除後應用程式會視需要重建", "アプリがキャッシュフォルダに置いたもの。削除しても必要に応じて作り直されます"},
+	"开发留下的可重建内容，按类别归拢：依赖、构建产物、各类缓存、模拟器与虚拟机。":                {"What development leaves behind and can rebuild, gathered by kind: dependencies, build output, caches, emulators and virtual machines.", "開發留下的可重建內容，依類別歸攏：相依套件、建置產物、各類快取、模擬器與虛擬機。", "開発で残る作り直せるものを種類ごとにまとめました：依存関係、ビルド成果物、各種キャッシュ、エミュレータと仮想マシン。"},
+	"这次扫描里没有发现开发相关的内容。":                                     {"This scan found no developer content.", "這次掃描沒有發現開發相關的內容。", "今回のスキャンでは開発関連のものは見つかりませんでした。"},
+	"清理可安全清理的 %s": {"Clean the safe %s", "清理可安全清理的 %s", "安全に消せる %s を消去"},
+	"清理 %s":       {"Clean %s", "清理 %s", "%s を消去"},
+	"把这一类里可重建的 %s 移到%s，清空前都可以还原": {"Moves the %s of this kind that can be rebuilt to the %s; all of it can be restored until you empty it", "把這一類裡可重建的 %s 移到%s，清空前都可以放回", "この種類の作り直せる %s を%sに移します。空にするまでいつでも戻せます"},
+	"这是一个类别，不是文件夹：进入后可逐项删除":      {"This is a kind, not a folder: open it to delete items one by one", "這是一個類別，不是資料夾：進入後可逐項刪除", "これはフォルダではなく種類です。開いて項目ごとに削除できます"},
 	"修改于%s":  {"modified %s", "修改於%s", "変更：%s"},
 	"占磁盘 %s": {"%s of the disk", "佔磁碟 %s", "ディスクの %s"},
 	"扫描范围":   {"Scan scope", "掃描範圍", "スキャン範囲"},
@@ -241,6 +265,20 @@ var catalog = map[string][3]string{
 	"位置与排除":   {"Locations and exclusions", "位置與排除", "場所と除外"},
 	"流程与占用保护": {"Flow and in-use protection", "流程與使用中保護", "流れと使用中の保護"},
 	"恢复与记录":   {"Restoring and records", "放回與記錄", "復元と記録"},
+
+	// updates (update.go)
+	"更新":       {"Updates", "更新", "アップデート"},
+	"版本与自动更新":  {"Version and automatic updates", "版本與自動更新", "バージョンと自動アップデート"},
+	"检查更新…":    {"Check for Updates…", "檢查更新…", "アップデートを確認…"},
+	"还没有检查过更新": {"Not checked for updates yet", "還沒有檢查過更新", "まだアップデートを確認していません"},
+	"有新版本 %s":  {"Version %s is available", "有新版本 %s", "新しいバージョン %s があります"},
+	"上次检查：%s":  {"Last checked: %s", "上次檢查：%s", "前回の確認：%s"},
+	"后台":       {"In the background", "背景", "バックグラウンド"},
+	"自动检查更新":   {"Check for updates automatically", "自動檢查更新", "アップデートを自動的に確認"},
+	"每天检查一次，有新版本时询问是否安装":                {"Checks once a day and asks before installing a new version", "每天檢查一次，有新版本時詢問是否安裝", "1 日に 1 回確認し、新しいバージョンがあればインストールするか尋ねます"},
+	"自动下载并安装":                           {"Download and install automatically", "自動下載並安裝", "自動的にダウンロードしてインストール"},
+	"检查到新版本时直接装好，下次启动时生效":               {"Installs a new version as soon as a check finds it; it runs from the next launch", "檢查到新版本時直接裝好，下次啟動時生效", "新しいバージョンが見つかるとそのままインストールし、次回の起動から有効になります"},
+	"这个版本不会自行更新：它是开发版本，或者由软件包管理器安装和更新。": {"This build does not update itself: it is a development build, or a package manager installs and updates it.", "這個版本不會自行更新：它是開發版本，或者由套件管理員安裝和更新。", "このバージョンは自動ではアップデートされません。開発版か、パッケージマネージャがインストールとアップデートを行います。"},
 
 	// styles
 	"机甲":  {"Mech", "機甲", "メカ"},

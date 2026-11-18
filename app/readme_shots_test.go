@@ -23,6 +23,9 @@ import (
 // writing them; the disk line shows a fixed 500 GB volume.
 //
 //	TOSSY_README_SHOTS=$PWD/../docs/screenshots go test -run TestReadmeShots .
+//
+// With TOSSY_STYLE_SHOTS=dir it also saves the overview in every style, at full size, as
+// style-<name>.png: the website's style switcher shows them.
 func TestReadmeShots(t *testing.T) {
 	out := os.Getenv("TOSSY_README_SHOTS")
 	if out == "" {
@@ -56,13 +59,21 @@ func TestReadmeShots(t *testing.T) {
 	a.set.InUseMin = 0 // the fixture was all just written
 	a.set.SkipApps = false
 
-	save := func(tt *ui.Tester, name string) {
-		f, err := os.Create(filepath.Join(out, name+".png"))
+	saveTo := func(tt *ui.Tester, dir, name string) {
+		f, err := os.Create(filepath.Join(dir, name+".png"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer f.Close()
 		if err := png.Encode(f, tt.Image()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save := func(tt *ui.Tester, name string) { saveTo(tt, out, name) }
+	// the website shows each style at full size (TOSSY_STYLE_SHOTS=dir)
+	styleShots := os.Getenv("TOSSY_STYLE_SHOTS")
+	if styleShots != "" {
+		if err := os.MkdirAll(styleShots, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -110,6 +121,9 @@ func TestReadmeShots(t *testing.T) {
 			tt.Advance(500 * time.Millisecond)
 			tt.Frame()
 		}
+		if styleShots != "" {
+			saveTo(tt, styleShots, "style-"+palettes[i].name)
+		}
 		c, r := i%cols, i/cols
 		dst := image.Rect(c*(tw+gap), r*(th+gap), c*(tw+gap)+tw, r*(th+gap)+th)
 		draw.CatmullRom.Scale(sheet, dst, tt.Image(), tt.Image().Bounds(), draw.Src, nil)
@@ -155,6 +169,30 @@ func TestReadmeShots(t *testing.T) {
 	a.git.open = false
 	a.zoomTo(0)
 	tt.Advance(time.Second)
+	tt.Frame()
+
+	// 4b. the developer's view: the same scan by kind, the list in focus, a kind under the pointer
+	a.setDev(true)
+	tt.Advance(2 * time.Second)
+	tt.Frame()
+	a.pf = pfList
+	for i := 0; i < 8; i++ { // the column widens on a spring
+		tt.Advance(250 * time.Millisecond)
+		tt.Frame()
+	}
+	for k := range a.sun.arcs {
+		if a.sun.arcs[k].ring == 2 && a.sun.arcs[k].node >= 0 {
+			x, y := a.arcPointOf(&a.sun.arcs[k])
+			tt.Move(x, y)
+			break
+		}
+	}
+	tt.Frame()
+	save(tt, "developer")
+	tt.Move(5, 5)
+	a.pf = pfNone
+	a.setDev(false)
+	tt.Advance(2 * time.Second)
 	tt.Frame()
 
 	// 5. Auto Clean: the analysis sweep

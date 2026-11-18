@@ -144,6 +144,8 @@ func (a *app) paintScanWire(p *ui.Painter, cx, cy, rad float32, ang float64, ink
 // radarTrail fans n thin wedges of the disc of radius rad about (cx, cy) behind the beam at
 // ang (radians clockwise from the right), each width wide and step behind the one before,
 // fading from c at the beam: sectors from the centre, drawn by the fill shader in one call.
+// The wedges meet edge to edge, width the same as step: where they overlap, the two add up to
+// a brighter spoke, and a fan of spokes turning with the beam strobes.
 func (a *app) radarTrail(p *ui.Painter, cx, cy, rad float32, ang float64, n int, step, width float64, c ui.Color) {
 	for len(a.trail) < n {
 		a.trail = append(a.trail, &shape{})
@@ -203,7 +205,7 @@ func (a *app) paintRescan(p *ui.Painter, r ui.Rect) {
 	}
 	ang := float64(now.Sub(a.scanStart)) / float64(time.Second) * tau / 2.4
 	// the beam: a thin fan over the rings, under the lit arcs
-	a.radarTrail(p, s.cx, s.cy, s.rad, ang, 16, .03, .031, ink.Alpha(.07))
+	a.radarTrail(p, s.cx, s.cy, s.rad, ang, 16, .03, .03, ink.Alpha(.07))
 	strokeLine(p, s.cx, s.cy, s.cx+float32(math.Cos(ang))*(s.rad+10), s.cy+float32(math.Sin(ang))*(s.rad+10), 1, ink.Alpha(.45))
 	for _, h := range s.arcs {
 		t0, ok := fx.lit[h.node]

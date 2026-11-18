@@ -19,6 +19,7 @@ type settings struct {
 	ReduceMotion bool   `json:"reduceMotion"`
 	Lang         string `json:"lang"` // "" follows the system; see languages
 
+	View        string `json:"view"`        // "dev" opens in the developer's view; "" in the disk view
 	Root        string `json:"root"`        // default scan root; "" = home
 	Exclude     string `json:"exclude"`     // one absolute path per line
 	CrossDevice bool   `json:"crossDevice"` // descend into other volumes
@@ -152,6 +153,7 @@ var settingsTabs = []struct{ key, label, hint, icon string }{
 	{"clean", "清理", "流程与占用保护", icoSparkle},
 	{"habits", "清理习惯", "从手动删除中学习", icoHabit},
 	{"trash", "废纸篓", "恢复与记录", icoTrash},
+	{"update", "更新", "版本与自动更新", icoUpdate},
 }
 
 // tabLabel is a category's name on screen; the trash goes by the platform's name for it.
@@ -254,6 +256,8 @@ func (a *app) settingsView(c *ui.Context) {
 						a.setHabits(c)
 					case "trash":
 						a.setTrash(c)
+					case "update":
+						a.setUpdate(c)
 					}
 				})
 			})
@@ -290,11 +294,7 @@ func (a *app) settingsNav(c *ui.Context, k setColors) {
 		ui.Box(c).Grow(1)
 		ui.Row(c).Padding(0, 12).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Box(c).Size(7, 7).Radius(3.5).Background(pal.level[0])
-			v := mygo.App.Version()
-			if v == "" {
-				v = "dev"
-			}
-			ui.Text(c, "Tossy "+v).FontSize(12).TextColor(pal.t3).SingleLine()
+			ui.Text(c, "Tossy "+appVersion()).FontSize(12).TextColor(pal.t3).SingleLine()
 		})
 	})
 }

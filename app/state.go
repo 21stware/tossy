@@ -49,8 +49,14 @@ type app struct {
 	cancel   context.CancelFunc
 	scanErr  error
 
-	t                *scan.Tree
-	ev               *safety.Evaluator
+	t                *scan.Tree        // the tree on screen: the scan, or the developer's lens of it
+	ev               *safety.Evaluator // and its verdicts
+	base             *scan.Tree        // the scan
+	baseEv           *safety.Evaluator
+	dev              *devLens // the developer's view of the scan, built when first shown (lens.go)
+	devOn            bool     // the developer's view is the one on screen
+	diskFocus        int32    // the disk view's folder in focus, while the developer's view is up
+	lensStale        bool     // the scan changed in a way the lens did not follow
 	tsun             trashSun // the trash scene's chart
 	rightSp          spring   // the right column's width: none before the first scan, wider when a panel has focus
 	rightW           float32
@@ -143,6 +149,12 @@ type app struct {
 	scene        int
 	anal         *analysis
 
+	// the updater, nil under test, and the switches of its settings page (update.go)
+	upd              *updates
+	updAuto, updInst bool
+	updWas           [2]bool
+	updShown         bool
+
 	timers  []timer
 	procs   []string // running programs, lower case
 	procsV  int
@@ -206,6 +218,7 @@ func newApp() *app {
 		}
 	}
 	a.pal = palettes[a.palIdx]
+	a.devOn = a.set.View == "dev"
 	return a
 }
 
@@ -252,19 +265,16 @@ func (a *app) setTree(t *scan.Tree, err error) {
 	}
 	// a rescan switches straight to the new data, at the folder that was in focus: the intro
 	// plays only for the first tree
-	focus := int32(0)
 	first := a.t == nil
-	if !first && a.focus != 0 {
-		if n := t.Find(a.t.Path(a.focus)); n != scan.None && t.Nodes[n].IsDir() {
-			focus = n
-		}
-	}
+	at := a.placeOf(a.focus)
 	a.hideMarked(t)
-	a.t, a.ev = t, safety.New(t)
+	a.base, a.baseEv = t, safety.New(t)
+	a.dev, a.diskFocus, a.lensStale = nil, 0, false
 	a.forgetGit()
-	a.focus, a.selected, a.hover = focus, focus, scan.None
-	a.ver++
-	a.sun.reset()
+	a.showView()
+	if n := a.find(at); n != scan.None && a.t.Nodes[n].IsDir() {
+		a.focus, a.selected = n, n
+	}
 	if first && a.motion() {
 		a.sun.intro = time.Now()
 	}
@@ -276,6 +286,9 @@ func (a *app) setTree(t *scan.Tree, err error) {
 // tree queries
 
 func (a *app) name(i int32) string {
+	if a.t.Virtual(i) { // the lens's own folders are named in the source language
+		return T(a.t.Name(i))
+	}
 	if i == 0 {
 		return displayRoot(a.t.Root)
 	}
@@ -405,6 +418,9 @@ func (a *app) isUnder(i, anc int32) bool {
 
 // canTrash says whether the user may move i to the trash, and why not.
 func (a *app) canTrash(i int32) (bool, string) {
+	if i > 0 && a.t.Virtual(i) {
+		return false, T("这是一个类别，不是文件夹：进入后可逐项删除")
+	}
 	if i <= 0 {
 		return false, T("扫描根目录不能删除")
 	}
@@ -452,16 +468,17 @@ func (a *app) trashNodes(items []cleanItem, many bool) *batch {
 	}
 	a.chartMorph(400 * time.Millisecond)
 	type job struct {
-		node int32
-		path string
-		meta trash.Meta
+		node, base int32 // in the tree on screen, and in the scan
+		path       string
+		meta       trash.Meta
 	}
 	jobs := make([]job, 0, len(items))
 	for _, it := range items {
-		jobs = append(jobs, job{it.node, a.t.Path(it.node), it.meta})
+		jobs = append(jobs, job{it.node, scan.None, a.t.Path(it.node), it.meta})
 	}
-	for _, it := range items {
-		a.t.Remove(it.node)
+	base, lens := a.base, a.lensOn()
+	for i, it := range items {
+		jobs[i].base = a.detach(it.node)
 		if it.meta.Source == trash.ByManual && a.set.Habits {
 			a.learn(it.node, 1, 0)
 		}
@@ -480,15 +497,15 @@ func (a *app) trashNodes(items []cleanItem, many bool) *batch {
 	a.trashMoving += len(jobs)
 	bin := a.bin
 	go func() {
-		var failed []int32
+		var failed []job
 		var errs []string
-		moved := map[string]int32{}
+		moved := map[string]job{}
 		for _, j := range jobs {
 			if it, err := bin.Move(j.path, j.meta); err != nil {
-				failed = append(failed, j.node)
+				failed = append(failed, j)
 				errs = append(errs, err.Error())
 			} else {
-				moved[it.ID] = j.node
+				moved[it.ID] = j
 			}
 		}
 		a.onMain(func() {
@@ -507,8 +524,17 @@ func (a *app) trashNodes(items []cleanItem, many bool) *batch {
 			if a.trashed == nil {
 				a.trashed = map[string]int32{}
 			}
-			for id, n := range moved {
-				a.trashed[id] = n
+			same := a.base == base // not rescanned meanwhile: the nodes are still this scan's
+			if lens != nil && a.dev != lens {
+				lens = nil // the lens was rebuilt meanwhile
+			}
+			for id, j := range moved {
+				if same && j.base != scan.None {
+					a.trashed[id] = j.base
+					if lens != nil {
+						lens.trashed[id] = j.node
+					}
+				}
 				b.ids = append(b.ids, id)
 			}
 			b.done = true
@@ -517,10 +543,19 @@ func (a *app) trashNodes(items []cleanItem, many bool) *batch {
 			}
 			if len(failed) > 0 {
 				a.chartMorph(420 * time.Millisecond)
-				for _, n := range failed {
-					a.t.Reattach(n)
+				for _, j := range failed {
+					if !same || j.base == scan.None {
+						continue
+					}
+					a.base.Reattach(j.base)
+					if lens != nil {
+						lens.reattach(j.node)
+					} else if a.dev != nil {
+						a.lensStale = true
+					}
 				}
 				a.ver++
+				a.syncLens()
 				a.toast(ui.Toast{Title: Tf("%d 项未能移到废纸篓", len(failed)), Description: firstLine(errs[0]), Type: "error"})
 			}
 			if a.habit != nil {
@@ -562,11 +597,8 @@ func (a *app) restore(ids []string) {
 			continue
 		}
 		ok++
-		if n, found := a.trashed[id]; found && a.t != nil && !a.t.Attached(n) {
-			delete(a.trashed, id)
-			a.t.Reattach(n)
-			a.ver++
-			sub := habit.Subject{Path: it.Orig, Dir: it.Dir, Size: it.Size, AgeDays: a.ev.AgeDays(n)}
+		if n, found := a.putBack(id); found {
+			sub := habit.Subject{Path: it.Orig, Dir: it.Dir, Size: it.Size, AgeDays: a.baseEv.AgeDays(n)}
 			switch it.Source {
 			case trash.ByHabit:
 				a.habit.Learn(sub, 0, 1)
@@ -576,6 +608,7 @@ func (a *app) restore(ids []string) {
 			}
 		}
 	}
+	a.syncLens()
 	if a.habit != nil {
 		a.habit.Save()
 	}

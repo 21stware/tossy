@@ -185,7 +185,7 @@ func (a *app) instrTerminal(p *ui.Painter, r ui.Rect) {
 		p.StrokePath(&br, 1.2, ink.Alpha(.6))
 	}
 	a.monoText(p, r.X+24, r.Y+20, fmt.Sprintf("[ SECTORS %d ] [ DEPTH %d ] [ %s ]", a.arcCount, a.depth(a.focus), a.modeName()), 10.5, ink.Alpha(.75))
-	line := "> du -sh " + clipText(p, a.t.Path(a.focus), r.W*.55, 10.5, 400) + "  " + strings.ToUpper(fmtSize(a.t.Nodes[a.focus].Size))
+	line := "> du -sh " + clipText(p, a.pathOrName(a.focus), r.W*.55, 10.5, 400) + "  " + strings.ToUpper(fmtSize(a.t.Nodes[a.focus].Size))
 	line, done := a.typed(p, line)
 	a.monoText(p, r.X+24, r.Y+r.H-30, line, 10.5, ink.Alpha(.85))
 	w, _ := p.MeasureText(0, ui.Span{Text: line, Size: 10.5, Font: "monospace"})

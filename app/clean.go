@@ -87,8 +87,8 @@ func (a *app) candItems(scope int32, lv safety.Level) []cleanItem {
 
 // habitItems lists what the learned habits would take under scope, besides skip.
 func (a *app) habitItems(scope int32, skip map[int32]bool) []cleanItem {
-	if a.habit == nil || !a.set.Habits {
-		return nil
+	if a.habit == nil || !a.set.Habits || a.t.IsLens() {
+		return nil // habits are learnt from, and matched against, folders on disk
 	}
 	var out []cleanItem
 	for _, p := range a.habit.Candidates(a.t, a.ev, scope, skip) {

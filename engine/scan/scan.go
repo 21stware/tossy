@@ -20,6 +20,11 @@ type Options struct {
 	// Exclude lists absolute paths that are recorded but not descended. Platform defaults
 	// (pseudo filesystems, macOS firmlink duplicates…) are always added.
 	Exclude []string
+	// Skip, if set, is asked about every directory (the folder it is in, and its name): one it
+	// reports is recorded but not descended, like an excluded path, so its size is its own
+	// blocks only. For a scan that looks for one kind of content and knows by a folder's name
+	// and place that it holds none. It is called from several goroutines.
+	Skip func(dir, name string) bool
 	// Progress, if set, is updated live with atomic counters.
 	Progress *Progress
 }
@@ -268,7 +273,7 @@ func (s *scanner) visit(j job, ents *[]rawEntry, sub []job) []job {
 			full := base + e.name
 			if e.cloud {
 				// dataless folder: listing it would trigger a download
-			} else if (!s.opt.CrossDevice && !s.devs[e.dev]) || s.excluded[full] {
+			} else if (!s.opt.CrossDevice && !s.devs[e.dev]) || s.excluded[full] || (s.opt.Skip != nil && s.opt.Skip(j.path, e.name)) {
 				n.Flags |= FlagMount
 			} else {
 				sub = append(sub, job{idx, full})

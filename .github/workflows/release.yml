@@ -1,8 +1,11 @@
 name: Release
 
-# A tag v<version> builds the macOS app and the Linux packages, with the command-line tool, and
-# attaches them to a draft release, which you publish. Run by hand, it builds them as artifacts
-# of the run, without a release.
+# A tag v<version> builds the Linux packages, with the command-line tool and the signed updates
+# of the app, and attaches them to a draft release. The macOS app is added to the draft from the
+# Mac that holds its Developer ID (Releasing, in the README): the runner has neither the
+# identity nor the notary credentials. You publish the draft: installed apps then update to it.
+# Run by hand, it builds everything as artifacts of the run, the macOS app signed ad hoc,
+# without a release.
 on:
   push:
     tags: ["v*"]
@@ -19,9 +22,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # signing, notarization and disk images need macOS
-          - { name: macOS, os: macos-latest, platform: darwin/universal, cli: "darwin/arm64 darwin/amd64" }
-          - { name: Linux, os: ubuntu-latest, platform: "linux/amd64,linux/arm64", cli: "linux/amd64 linux/arm64" }
+          # disk images need macOS; the runner signs the app ad hoc, which Apple does not notarize
+          - { name: macOS, os: macos-latest, platform: darwin/universal, flags: "-sign - -skip-notarize", cli: "darwin/arm64 darwin/amd64" }
+          - { name: Linux, os: ubuntu-latest, platform: "linux/amd64,linux/arm64", flags: "", cli: "linux/amd64 linux/arm64" }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -30,9 +33,26 @@ jobs:
       - name: Check the tag against the version
         if: github.ref_type == 'tag'
         run: test "$GITHUB_REF_NAME" = "v$(jq -r .version app/mygo.json)"
+      # Installed apps update themselves from the release (updates in app/mygo.json): with the
+      # key, the build signs an update archive for each platform and writes its manifest,
+      # update-<platform>.json, and the deltas from the versions before. A release without
+      # them is one that no installed app can update to.
+      - name: Check the update key
+        if: github.ref_type == 'tag'
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          if [ -z "$MYGO_UPDATER_PRIVATE_KEY" ]; then
+            echo "::error::Set the MYGO_UPDATER_PRIVATE_KEY secret: the key that signs updates (mygo keygen)"
+            exit 1
+          fi
+      # Not the macOS app of a release: an ad hoc signed one would replace the notarized one.
       - name: Build the app
+        if: matrix.name != 'macOS' || github.ref_type != 'tag'
         working-directory: app
-        run: go run github.com/egoist/mygo/cmd/mygo build -platform "${{ matrix.platform }}" .
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: go run github.com/egoist/mygo/cmd/mygo build -platform "${{ matrix.platform }}" ${{ matrix.flags }} .
       - name: Build the command-line tool
         run: |
           version=$(jq -r .version app/mygo.json)
@@ -47,7 +67,8 @@ jobs:
         run: |
           shopt -s nullglob
           files=(app/build/*/*.dmg app/build/*/*.deb app/build/*/*.rpm app/build/*/*.tar.gz)
-          cp "${files[@]}" dist/
+          files+=(app/build/*/update-*.json app/build/*/*.delta) # what installed apps update from
+          if [ ${#files[@]} -gt 0 ]; then cp "${files[@]}" dist/; fi # none from macOS on a tag
           # one install.sh serves every architecture
           if [ -f app/build/linux-amd64/install.sh ]; then cp app/build/linux-amd64/install.sh dist/; fi
           ls -la dist
