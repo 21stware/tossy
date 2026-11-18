@@ -1,6 +1,6 @@
 name: Release
 
-# A tag v<version> builds the Linux packages, with the command-line tool and the signed updates
+# A tag v<version> builds the Linux packages and the Windows installers, with the command-line tool and the signed updates
 # of the app, and attaches them to a draft release. The macOS app is added to the draft from the
 # Mac that holds its Developer ID (Releasing, in the README): the runner has neither the
 # identity nor the notary credentials. You publish the draft: installed apps then update to it.
@@ -25,6 +25,11 @@ jobs:
           # disk images need macOS; the runner signs the app ad hoc, which Apple does not notarize
           - { name: macOS, os: macos-latest, platform: darwin/universal, flags: "-sign - -skip-notarize", cli: "darwin/arm64 darwin/amd64" }
           - { name: Linux, os: ubuntu-latest, platform: "linux/amd64,linux/arm64", flags: "", cli: "linux/amd64 linux/arm64" }
+          # on Windows mygo downloads NSIS for the installer; nothing signs it with Authenticode yet
+          - { name: Windows, os: windows-latest, platform: "windows/amd64,windows/arm64", flags: "", cli: "windows/amd64 windows/arm64" }
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -60,17 +65,23 @@ jobs:
           for t in ${{ matrix.cli }}; do
             os=${t%/*} arch=${t#*/}
             dir=$(mktemp -d)
-            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w" -o "$dir/tossy" ./cmd/tossy
-            tar -czf "dist/tossy-cli-$version-$os-$arch.tar.gz" -C "$dir" tossy
+            if [ "$os" = windows ]; then
+              CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w" -o "$dir/tossy.exe" ./cmd/tossy
+              7z a -tzip "dist/tossy-cli-$version-$os-$arch.zip" "$dir/tossy.exe" > /dev/null
+            else
+              CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w" -o "$dir/tossy" ./cmd/tossy
+              tar -czf "dist/tossy-cli-$version-$os-$arch.tar.gz" -C "$dir" tossy
+            fi
           done
       - name: Collect the files
         run: |
           shopt -s nullglob
-          files=(app/build/*/*.dmg app/build/*/*.deb app/build/*/*.rpm app/build/*/*.tar.gz)
+          files=(app/build/*/*.dmg app/build/*/*.deb app/build/*/*.rpm app/build/*/*.tar.gz app/build/*/*-setup-*.exe)
           files+=(app/build/*/update-*.json app/build/*/*.delta) # what installed apps update from
           if [ ${#files[@]} -gt 0 ]; then cp "${files[@]}" dist/; fi # none from macOS on a tag
           # one install.sh serves every architecture
           if [ -f app/build/linux-amd64/install.sh ]; then cp app/build/linux-amd64/install.sh dist/; fi
+          if [ -f app/build/windows-amd64/install.ps1 ]; then cp app/build/windows-amd64/install.ps1 dist/; fi
           ls -la dist
       - uses: actions/upload-artifact@v7
         with:

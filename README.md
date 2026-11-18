@@ -6,7 +6,7 @@
 
 <p align="center">
   See what fills your disk, and clean only what is safe to clean.<br>
-  <a href="https://github.com/21stware/tossy/releases/latest">Download for macOS and Linux</a>
+  <a href="https://github.com/21stware/tossy/releases/latest">Download for macOS, Windows and Linux</a>
 </p>
 
 Tossy is a disk cleanup analyser. It shows what fills your disk as a sunburst you can drill into, gives everything a safety verdict, and cleans only what is safe to clean in one click. Anything it removes can be put back until you empty its trash.
@@ -21,6 +21,8 @@ Get the latest build from [Releases](https://github.com/21stware/tossy/releases/
 
 **macOS** (12 or later, Apple silicon and Intel): open `tossy-<version>.dmg` and drag Tossy into Applications. The app is signed with a Developer ID and notarized by Apple, so it opens like any other.
 
+**Windows** (10 and 11, x64 and ARM64): run `tossy-setup-<version>-amd64.exe` (`arm64` on ARM). It installs Tossy for your user, with no administrator rights, and adds it to the Start menu. The installer is not code-signed yet, so SmartScreen may ask you to confirm: More info → Run anyway. Or install from PowerShell with `irm https://github.com/21stware/tossy/releases/latest/download/install.ps1 | iex`.
+
 **Linux** (x86-64 and ARM64; needs GTK 3):
 
 | Distribution | File | Install |
@@ -29,7 +31,7 @@ Get the latest build from [Releases](https://github.com/21stware/tossy/releases/
 | Fedora, RHEL | `tossy-<version>-1.x86_64.rpm` | `sudo dnf install ./tossy-<version>-1.x86_64.rpm` |
 | Any (Arch too), per user | `tossy-<version>-linux-amd64.tar.gz` | `sh install.sh tossy-<version>-linux-amd64.tar.gz` |
 
-ARM64 files carry `arm64` / `aarch64` in place of `amd64` / `x86_64`. The command-line tool is attached as `tossy-cli-<version>-<os>-<arch>.tar.gz`. `SHA256SUMS` lists the checksums of every file.
+ARM64 files carry `arm64` / `aarch64` in place of `amd64` / `x86_64`. The command-line tool is attached as `tossy-cli-<version>-<os>-<arch>.tar.gz` (`.zip` for Windows). `SHA256SUMS` lists the checksums of every file.
 
 **Updates.** The app updates itself: it checks for a new release once a day, shows what is new and offers to install it, and downloads only what changed since your version. Check by hand with Tossy → Check for Updates… on macOS, or in Settings → Updates, where the background checks can also be turned off or left to install on their own. Every update is signed, and the app refuses one that is not signed with Tossy's key. An app installed from the `.deb` or `.rpm` is updated by installing the newer package instead; the one `install.sh` puts in `~/.local` updates itself.
 
@@ -192,7 +194,7 @@ cd app && TOSSY_ICONS=$PWD/../docs go test -run TestDockIcons .
 
 ## Releasing
 
-[.github/workflows/release.yml](.github/workflows/release.yml) builds the Linux packages (x86-64 and ARM64) on Ubuntu and the command-line tool for macOS and Linux, and attaches them to a draft release. The macOS app is built on the Mac that holds the Developer ID that signs it, and added to the same draft. To release, set `version` in [app/mygo.json](app/mygo.json), commit, and push the matching tag:
+[.github/workflows/release.yml](.github/workflows/release.yml) builds the Linux packages (x86-64 and ARM64) on Ubuntu, the Windows installers (x64 and ARM64) on Windows and the command-line tool for every platform, and attaches them to a draft release. The macOS app is built on the Mac that holds the Developer ID that signs it, and added to the same draft. To release, set `version` in [app/mygo.json](app/mygo.json), commit, and push the matching tag:
 
 ```bash
 git tag v0.1.0
