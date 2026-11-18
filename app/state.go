@@ -149,6 +149,12 @@ type app struct {
 	scene        int
 	anal         *analysis
 
+	// the updater, nil under test, and the switches of its settings page (update.go)
+	upd              *updates
+	updAuto, updInst bool
+	updWas           [2]bool
+	updShown         bool
+
 	timers  []timer
 	procs   []string // running programs, lower case
 	procsV  int

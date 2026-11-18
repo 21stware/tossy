@@ -3,6 +3,14 @@
   "identifier": "app.tossy.Tossy",
   "version": "0.1.0",
   "out": "build",
+  "updates": {
+    "publicKey": "swwtdEhMxc+h4Tt910EY87sEMQu3Oe3I+ZFScLiu4dE=",
+    "github": "21stware/tossy"
+  },
+  "macos": {
+    "signingIdentity": "Developer ID Application: Cheng Aobo (R54TY86R4C)",
+    "notarize": { "keychainProfile": "tossy-notary" }
+  },
   "linux": {
     "comment": "See what fills your disk, and clean only what is safe to clean",
     "categories": ["Utility", "System", "FileTools"],

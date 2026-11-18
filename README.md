@@ -19,11 +19,7 @@ It ships as a native desktop app (built with [MyGo](https://github.com/egoist/my
 
 Get the latest build from [Releases](https://github.com/21stware/tossy/releases/latest).
 
-**macOS** (12 or later, Apple silicon and Intel): open `tossy-<version>.dmg` and drag Tossy into Applications. The app is not notarized yet, so macOS blocks its first launch. Allow it in System Settings → Privacy & Security → Open Anyway, or clear the quarantine flag:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Tossy.app
-```
+**macOS** (12 or later, Apple silicon and Intel): open `tossy-<version>.dmg` and drag Tossy into Applications. The app is signed with a Developer ID and notarized by Apple, so it opens like any other.
 
 **Linux** (x86-64 and ARM64; needs GTK 3):
 
@@ -34,6 +30,8 @@ xattr -dr com.apple.quarantine /Applications/Tossy.app
 | Any (Arch too), per user | `tossy-<version>-linux-amd64.tar.gz` | `sh install.sh tossy-<version>-linux-amd64.tar.gz` |
 
 ARM64 files carry `arm64` / `aarch64` in place of `amd64` / `x86_64`. The command-line tool is attached as `tossy-cli-<version>-<os>-<arch>.tar.gz`. `SHA256SUMS` lists the checksums of every file.
+
+**Updates.** The app updates itself: it checks for a new release once a day, shows what is new and offers to install it, and downloads only what changed since your version. Check by hand with Tossy → Check for Updates… on macOS, or in Settings → Updates, where the background checks can also be turned off or left to install on their own. Every update is signed, and the app refuses one that is not signed with Tossy's key. An app installed from the `.deb` or `.rpm` is updated by installing the newer package instead; the one `install.sh` puts in `~/.local` updates itself.
 
 ## Features
 
@@ -124,7 +122,7 @@ The switch beside the Auto Clean button (or ⌘D) turns the same scan into a dev
 
 ### Settings
 
-Settings are grouped into Appearance, Scan (default location, excluded paths, crossing volumes), Cleaning (review sheet, analysis sweep, in-use protection), Clean habits and Trash. They are saved to `settings.json` in the state folder.
+Settings are grouped into Appearance, Scan (default location, excluded paths, crossing volumes), Cleaning (review sheet, analysis sweep, in-use protection), Clean habits, Trash and Updates (the version, a check on demand, and the background checks). They are saved to `settings.json` in the state folder; the choices about updates are the updater's, in `updater.json` beside it.
 
 ![Settings](docs/screenshots/settings.png)
 
@@ -194,7 +192,7 @@ cd app && TOSSY_ICONS=$PWD/../docs go test -run TestDockIcons .
 
 ## Releasing
 
-[.github/workflows/release.yml](.github/workflows/release.yml) builds the macOS app on a macOS runner and the Linux packages (x86-64 and ARM64) on Ubuntu, with the command-line tool for both, and attaches them to a draft release. To release, set `version` in [app/mygo.json](app/mygo.json), commit, and push the matching tag:
+[.github/workflows/release.yml](.github/workflows/release.yml) builds the Linux packages (x86-64 and ARM64) on Ubuntu and the command-line tool for macOS and Linux, and attaches them to a draft release. The macOS app is built on the Mac that holds the Developer ID that signs it, and added to the same draft. To release, set `version` in [app/mygo.json](app/mygo.json), commit, and push the matching tag:
 
 ```bash
 git tag v0.1.0
@@ -204,7 +202,45 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow checks that the tag matches the version, then creates the draft release `v0.1.0` with generated notes and `SHA256SUMS`. Review it and publish it on GitHub. Running the workflow by hand (Actions → Release → Run workflow) builds everything as run artifacts without a release. [.github/workflows/ci.yml](.github/workflows/ci.yml) vets and tests every push and pull request on Linux and macOS.
+The workflow checks that the tag matches the version, then creates the draft release `v0.1.0` with generated notes and `SHA256SUMS`. When it has finished, build the macOS app and upload it, from `app`:
+
+```bash
+MYGO_UPDATER_PRIVATE_KEY="$(cat "$HOME/Library/Application Support/mygo/update-keys/mygo-update.key")" go tool mygo build -platform darwin/universal -upload .
+```
+
+The build signs the app with `macos.signingIdentity` of [app/mygo.json](app/mygo.json), has Apple notarize the disk image and staples the ticket, then adds the disk image, the update archive and its manifest to the draft, and their checksums to `SHA256SUMS`. The notary credentials are the keychain profile that `macos.notarize` names, stored once:
+
+```bash
+xcrun notarytool store-credentials tossy-notary
+```
+
+Review the draft and publish it on GitHub: once it is the latest release, installed apps update to it. Running the workflow by hand (Actions → Release → Run workflow) builds everything as run artifacts without a release, the macOS app signed ad hoc. [.github/workflows/ci.yml](.github/workflows/ci.yml) vets and tests every push and pull request on Linux and macOS.
+
+Updates are MyGo's [auto-updates](https://github.com/egoist/mygo/blob/main/docs/updates.md), configured under `updates` in [app/mygo.json](app/mygo.json). With the key that signs them in the `MYGO_UPDATER_PRIVATE_KEY` secret, the build adds to each platform an update archive (the Linux `tar.gz`, `tossy-<version>-darwin-universal.tar.gz`), its manifest `update-<platform>.json`, which installed apps read from the latest release, and `.delta` files from the last three versions. A tag without the secret fails before building, as no installed app could update to its release. The secret is the contents of `mygo-update.key`, which `go tool mygo keygen` writes; its public half is `updates.publicKey`. Keep the key safe: apps accept only updates signed with it, so losing it strands the installed ones.
+
+```bash
+gh secret set MYGO_UPDATER_PRIVATE_KEY --repo 21stware/tossy < "$HOME/Library/Application Support/mygo/update-keys/mygo-update.key"
+```
+
+The update window shows the version's section of a `CHANGELOG.md` in `app/` (`## 0.2.0`) as its release notes; when the file exists, it must have that section.
+
+## Website
+
+[tossy.app](https://tossy.app) is the static page in [site/](site/). [.github/workflows/pages.yml](.github/workflows/pages.yml) publishes it to GitHub Pages on every push to `main` that touches it. To preview it:
+
+```bash
+python3 -m http.server --directory site 4173
+```
+
+Its pictures are the README's screenshots as WebP, plus the overview in every style, which `TestReadmeShots` also writes when `TOSSY_STYLE_SHOTS` names a folder. The page's style switcher shows them, and takes its colours from the palettes in [app/theme.go](app/theme.go):
+
+```bash
+cd app && TOSSY_README_SHOTS=$PWD/../docs/screenshots TOSSY_STYLE_SHOTS=$PWD/build/styles go test -run TestReadmeShots .
+```
+
+```bash
+for f in app/build/styles/*.png docs/screenshots/{analysis,browse,developer,git,trash}.png; do cwebp -quiet -q 90 -m 6 -sharp_yuv "$f" -o "site/shots/$(basename "${f%.png}").webp"; done
+```
 
 ## Rendering
 
@@ -240,5 +276,6 @@ engine/gitrepo   Git repository and worktree status
 engine/statedir  state folder location and FanFree migration
 prototype/       interactive HTML prototype
 docs/            README screenshots, the Dock icon strip, the icon's SVG sources
-.github/         CI and release workflows
+site/            the website, tossy.app
+.github/         CI, release and website workflows
 ```

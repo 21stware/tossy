@@ -266,6 +266,20 @@ var catalog = map[string][3]string{
 	"流程与占用保护": {"Flow and in-use protection", "流程與使用中保護", "流れと使用中の保護"},
 	"恢复与记录":   {"Restoring and records", "放回與記錄", "復元と記録"},
 
+	// updates (update.go)
+	"更新":       {"Updates", "更新", "アップデート"},
+	"版本与自动更新":  {"Version and automatic updates", "版本與自動更新", "バージョンと自動アップデート"},
+	"检查更新…":    {"Check for Updates…", "檢查更新…", "アップデートを確認…"},
+	"还没有检查过更新": {"Not checked for updates yet", "還沒有檢查過更新", "まだアップデートを確認していません"},
+	"有新版本 %s":  {"Version %s is available", "有新版本 %s", "新しいバージョン %s があります"},
+	"上次检查：%s":  {"Last checked: %s", "上次檢查：%s", "前回の確認：%s"},
+	"后台":       {"In the background", "背景", "バックグラウンド"},
+	"自动检查更新":   {"Check for updates automatically", "自動檢查更新", "アップデートを自動的に確認"},
+	"每天检查一次，有新版本时询问是否安装":                {"Checks once a day and asks before installing a new version", "每天檢查一次，有新版本時詢問是否安裝", "1 日に 1 回確認し、新しいバージョンがあればインストールするか尋ねます"},
+	"自动下载并安装":                           {"Download and install automatically", "自動下載並安裝", "自動的にダウンロードしてインストール"},
+	"检查到新版本时直接装好，下次启动时生效":               {"Installs a new version as soon as a check finds it; it runs from the next launch", "檢查到新版本時直接裝好，下次啟動時生效", "新しいバージョンが見つかるとそのままインストールし、次回の起動から有効になります"},
+	"这个版本不会自行更新：它是开发版本，或者由软件包管理器安装和更新。": {"This build does not update itself: it is a development build, or a package manager installs and updates it.", "這個版本不會自行更新：它是開發版本，或者由套件管理員安裝和更新。", "このバージョンは自動ではアップデートされません。開発版か、パッケージマネージャがインストールとアップデートを行います。"},
+
 	// styles
 	"机甲":  {"Mech", "機甲", "メカ"},
 	"经典":  {"Classic", "經典", "クラシック"},

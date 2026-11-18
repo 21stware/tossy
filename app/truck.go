@@ -112,7 +112,7 @@ func (r *truckRun) step(s trash.Step) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !s.Done {
-		r.cur, r.curSize, r.curT0 = s.Item.Orig, s.Item.Size, time.Now()
+		r.cur, r.curSize, r.curT0 = s.Item.Orig, s.Item.Size, time.Time{} // timed from the frame that sees it
 		return
 	}
 	r.cur = ""
@@ -212,9 +212,9 @@ func (a *app) truckPose(r *truckRun, g truckGeo) (front, base float32) {
 	return pf, pb
 }
 
-// target is the progress the deletion has reached, by bytes and by count, with the item in
-// hand creeping on so a long one still moves.
-func (r *truckRun) target() (float64, string, []string) {
+// target is the progress the deletion has reached by now, the frame's time: by bytes and by
+// count, with the item in hand creeping on so a long one still moves.
+func (r *truckRun) target(now time.Time) (float64, string, []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	fin := r.finished
@@ -230,7 +230,10 @@ func (r *truckRun) target() (float64, string, []string) {
 		g /= .3
 	}
 	if r.cur != "" {
-		el := time.Since(r.curT0).Seconds()
+		if r.curT0.IsZero() {
+			r.curT0 = now
+		}
+		el := now.Sub(r.curT0).Seconds()
 		part := .3 / float64(max(1, r.totalN))
 		if r.totalB > 0 {
 			part += .7 * byB(r.curSize)
@@ -250,7 +253,7 @@ func (a *app) stepTruck() {
 	}
 	a.frame = true
 	now := a.now
-	g, cur, fin := r.target()
+	g, cur, fin := r.target(now)
 	r.gTo, r.working = g, cur
 	el := now.Sub(r.t0)
 	// item by item: the balls of what is gone go in, one after another

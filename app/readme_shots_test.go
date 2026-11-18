@@ -23,6 +23,9 @@ import (
 // writing them; the disk line shows a fixed 500 GB volume.
 //
 //	TOSSY_README_SHOTS=$PWD/../docs/screenshots go test -run TestReadmeShots .
+//
+// With TOSSY_STYLE_SHOTS=dir it also saves the overview in every style, at full size, as
+// style-<name>.png: the website's style switcher shows them.
 func TestReadmeShots(t *testing.T) {
 	out := os.Getenv("TOSSY_README_SHOTS")
 	if out == "" {
@@ -56,13 +59,21 @@ func TestReadmeShots(t *testing.T) {
 	a.set.InUseMin = 0 // the fixture was all just written
 	a.set.SkipApps = false
 
-	save := func(tt *ui.Tester, name string) {
-		f, err := os.Create(filepath.Join(out, name+".png"))
+	saveTo := func(tt *ui.Tester, dir, name string) {
+		f, err := os.Create(filepath.Join(dir, name+".png"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer f.Close()
 		if err := png.Encode(f, tt.Image()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save := func(tt *ui.Tester, name string) { saveTo(tt, out, name) }
+	// the website shows each style at full size (TOSSY_STYLE_SHOTS=dir)
+	styleShots := os.Getenv("TOSSY_STYLE_SHOTS")
+	if styleShots != "" {
+		if err := os.MkdirAll(styleShots, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -109,6 +120,9 @@ func TestReadmeShots(t *testing.T) {
 		for k := 0; k < 8; k++ { // let power-on and refresh effects finish
 			tt.Advance(500 * time.Millisecond)
 			tt.Frame()
+		}
+		if styleShots != "" {
+			saveTo(tt, styleShots, "style-"+palettes[i].name)
 		}
 		c, r := i%cols, i/cols
 		dst := image.Rect(c*(tw+gap), r*(th+gap), c*(tw+gap)+tw, r*(th+gap)+th)

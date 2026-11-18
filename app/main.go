@@ -27,6 +27,7 @@ func main() {
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs
 	}
+	a.useUpdater()
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Title: "Tossy", Width: 1280, Height: 820, MinWidth: 720, MinHeight: 620,
@@ -115,7 +116,10 @@ func (a *app) view(c *ui.Context) {
 	// rebuild in step with the display (120Hz on ProMotion), not on a 16ms timer that beats
 	// against the refresh and drops frames
 	a.wakeForTimers(c)
-	if a.frame || a.fly.active() || len(a.binS.inflight) > 0 {
+	// A vehicle emptying the trash runs in the paint (stepTruck), whose own frames paint without
+	// building the view: build each frame while it is here, so that the trash view follows the
+	// deletion and the timer its end sets (emptied) is seen with no input to wake the view.
+	if a.frame || a.fly.active() || len(a.binS.inflight) > 0 || a.binS.truck != nil {
 		c.AnimationFrame()
 	}
 }

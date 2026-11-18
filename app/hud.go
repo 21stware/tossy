@@ -288,7 +288,7 @@ func (a *app) paintScanning(p *ui.Painter, r ui.Rect) {
 	now := p.Now()
 	ang := float64(now.Sub(a.scanStart)) / float64(time.Second) * tau / 2.4
 	// sweep: fading behind the beam
-	a.radarTrail(p, cx, cy, rad, ang, 24, .035, .036, ink.Alpha(.16))
+	a.radarTrail(p, cx, cy, rad, ang, 24, .035, .035, ink.Alpha(.16))
 	a.paintScanWire(p, cx, cy, rad, ang, ink)
 	pr := a.prog
 	centerText(p, cx, cy-14, fmtSize(pr.Bytes.Load()), 26, 600, pal.text, "")

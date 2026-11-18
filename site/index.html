@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en" data-style="hud">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tossy — See what fills your disk, clean only what is safe</title>
+<meta name="description" content="Tossy is a disk cleanup analyser for macOS and Linux. It draws your disk as a sunburst, gives every item a safety verdict, and cleans only what is safe to clean. Anything it removes can be put back.">
+<meta name="theme-color" content="#0d1013">
+<link rel="canonical" href="https://tossy.app/">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tossy.app/">
+<meta property="og:title" content="Tossy">
+<meta property="og:description" content="See what fills your disk, and clean only what is safe to clean.">
+<meta property="og:image" content="https://tossy.app/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<script>
+// the style and the language are set before the first paint
+(function () {
+  try {
+    var s = localStorage.getItem("tossy-style");
+    if (s) document.documentElement.dataset.style = s;
+    var q = new URLSearchParams(location.search).get("lang");
+    var l = q || localStorage.getItem("tossy-lang") || (navigator.language || "en");
+    if (/^zh/i.test(l)) document.documentElement.lang = "zh-Hans";
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap top-row">
+    <a class="brand" href="#top" aria-label="Tossy">
+      <img src="icon.png" width="28" height="28" alt="">
+      <span>Tossy</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="#verdicts" data-i18n="nav.features">Features</a>
+      <a href="#developer" data-i18n="nav.dev">Developer view</a>
+      <a href="#cli" data-i18n="nav.cli">Command line</a>
+      <a href="https://github.com/21stware/tossy">GitHub</a>
+    </nav>
+    <div class="top-actions">
+      <button class="lang" id="lang" type="button" aria-label="切换到简体中文">中文</button>
+      <a class="btn btn-small" href="#download" data-i18n="nav.download">Download</a>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+<section class="hero">
+  <div class="wrap">
+    <p class="readout" data-i18n="hero.readout">Disk cleanup analyser · macOS · Linux</p>
+    <h1 data-i18n="hero.h1">See what fills your disk.<br>Clean only what’s <em>safe</em>.</h1>
+    <div class="hero-grid">
+      <p class="lede" data-i18n="hero.lede">Tossy draws your disk as a sunburst you can drill into, gives every item a safety verdict, and cleans the safe ones in one click. Anything it removes can be put back until you empty its trash.</p>
+      <div class="hero-side">
+        <div class="cta">
+          <a class="btn" id="dl-hero" href="https://github.com/21stware/tossy/releases/latest">Download</a>
+          <a class="btn btn-ghost" href="https://github.com/21stware/tossy" data-i18n="hero.source">Source on GitHub</a>
+        </div>
+        <p class="fine" data-i18n="hero.fine">macOS 12 or later, Apple silicon and Intel · Linux x86-64 and ARM64 · desktop app and command-line tool</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap stage">
+    <figure class="window">
+      <div class="window-bar" aria-hidden="true">
+        <span class="lights"><i></i><i></i><i></i></span>
+        <span class="window-title">Tossy</span>
+        <span class="window-style" id="window-style">HUD</span>
+      </div>
+      <div class="window-body">
+        <img id="hero-shot" src="shots/style-hud.webp" width="1280" height="820"
+             alt="Tossy: the disk as a sunburst, with the folder list beside it and the trash bin in the corner" data-i18n-alt="hero.alt">
+      </div>
+    </figure>
+
+    <div class="dock" id="dock" role="radiogroup" aria-label="Style" data-i18n-aria="dock.label"></div>
+    <p class="dock-caption">
+      <span class="readout" id="style-readout">Style 01/10 · HUD</span>
+      <span id="style-desc">Holographic cockpit: glass sectors, glowing outlines and instrument rings.</span>
+    </p>
+    <p class="dock-note" data-i18n="dock.note">Ten styles. Pick one: the app’s Dock icon follows it, and so does this page.</p>
+  </div>
+</section>
+
+<section class="section" id="verdicts">
+  <div class="wrap">
+    <div class="split">
+      <div>
+        <p class="readout" data-i18n="v.eyebrow">Safety</p>
+        <h2 data-i18n="v.h2">Every item gets a verdict.</h2>
+        <p class="body" data-i18n="v.p">About 90 built-in rules sort what is on your disk into four levels. An item without a rule of its own inherits its parent’s verdict.</p>
+        <p class="body small" data-i18n="v.note">Generic names such as <code>dist</code>, <code>build</code> or <code>target</code> only count inside a real project, one with a <code>package.json</code>, <code>Cargo.toml</code> or <code>go.mod</code>. Your home folders are personal whatever they hold.</p>
+      </div>
+      <div class="verdicts" role="list">
+        <div class="verdict" role="listitem" style="--c: var(--safe)">
+          <div class="lvl"><i></i><span data-i18n="v.safe">Safe</span></div>
+          <div>
+            <p class="mean" data-i18n="v.safe.m">Rebuilt or re-downloaded on demand.</p>
+            <p class="ex"><code>node_modules</code><code>__pycache__</code><code>DerivedData</code><code>target</code><code>~/.npm</code><code>~/.cargo</code><code>go-build</code><span data-i18n="v.safe.x">app caches</span></p>
+          </div>
+        </div>
+        <div class="verdict" role="listitem" style="--c: var(--review)">
+          <div class="lvl"><i></i><span data-i18n="v.review">Review</span></div>
+          <div>
+            <p class="mean" data-i18n="v.review.m">Probably fine, but you should confirm.</p>
+            <p class="ex" data-i18n="v.review.x"><span>Docker and VM disks</span><span>iOS simulators</span><span>local models</span><span>virtualenvs</span><span>Downloads</span></p>
+          </div>
+        </div>
+        <div class="verdict" role="listitem" style="--c: var(--personal)">
+          <div class="lvl"><i></i><span data-i18n="v.personal">Personal</span></div>
+          <div>
+            <p class="mean" data-i18n="v.personal.m">Your own data. Tossy asks before it touches any of it.</p>
+            <p class="ex"><code>Documents</code><code>Desktop</code><code>Photos</code><code>Mail</code><code>.ssh</code><code>.git</code></p>
+          </div>
+        </div>
+        <div class="verdict" role="listitem" style="--c: var(--protected)">
+          <div class="lvl"><i></i><span data-i18n="v.protected">Protected</span></div>
+          <div>
+            <p class="mean" data-i18n="v.protected.m">The OS needs it. Tossy never deletes it.</p>
+            <p class="ex"><code>/System</code><code>/usr</code><code>C:\Windows</code></p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <figure class="shot shot-wide">
+      <img src="shots/analysis.webp" width="1280" height="820" loading="lazy"
+           alt="Auto Clean analysing a home folder: the chart is coloured by safety level" data-i18n-alt="v.alt">
+      <figcaption data-i18n="v.cap">Auto Clean at work: the chart switches to safety colours and marks what it will take.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section" id="chart">
+  <div class="wrap feature">
+    <div class="feature-text">
+      <p class="readout" data-i18n="c.eyebrow">Structure</p>
+      <h2 data-i18n="c.h2">The whole disk in one chart.</h2>
+      <p class="body" data-i18n="c.p">Each ring is one level of folders, each sector as wide as what it holds. Click a sector to drill in; the centre, the breadcrumbs or Backspace take you back up.</p>
+      <ul class="points">
+        <li data-i18n="c.1"><b>A fast parallel scan.</b> It reads whole batches of directory entries per syscall and keeps millions of them in a compact tree.</li>
+        <li data-i18n="c.2"><b>List and detail.</b> The panel beside the chart sorts the folder in focus by size, and shows the verdict of whatever you select, with the reason for it.</li>
+        <li data-i18n="c.3"><b>It moves with you.</b> Sectors morph when things are removed or restored, and the disk line shows the space you got back.</li>
+      </ul>
+    </div>
+    <figure class="shot">
+      <img src="shots/browse.webp" width="1280" height="820" loading="lazy"
+           alt="Drilled into a projects folder, with a row selected in the list" data-i18n-alt="c.alt">
+    </figure>
+  </div>
+</section>
+
+<section class="section" id="developer">
+  <div class="wrap feature flip">
+    <div class="feature-text">
+      <p class="readout" data-i18n="d.eyebrow">Developer view</p>
+      <h2 data-i18n="d.h2">Everything that building software leaves behind.</h2>
+      <p class="body" data-i18n="d.p">One switch (⌘D) turns the same scan into a developer’s view: only what development leaves behind, wherever it sits on the disk, grouped by kind instead of by folder.</p>
+      <p class="kinds" data-i18n="d.kinds"><span>Dependencies</span><span>Build output</span><span>Build cache</span><span>Package cache</span><span>Emulators &amp; devices</span><span>Containers &amp; VMs</span><span>Local models</span><span>App cache</span></p>
+      <p class="body small" data-i18n="d.note">Auto Clean takes only developer content here, and still only what is safe. Emulators, VM disks, models and virtualenvs are listed, but left for you to delete one by one.</p>
+    </div>
+    <figure class="shot">
+      <img src="shots/developer.webp" width="1280" height="820" loading="lazy"
+           alt="The developer view: the scan grouped by kind" data-i18n-alt="d.alt">
+    </figure>
+  </div>
+
+  <div class="wrap feature" id="git">
+    <div class="feature-text">
+      <p class="readout">Git</p>
+      <h2 data-i18n="g.h2">It asks git before you delete a checkout.</h2>
+      <p class="body" data-i18n="g.p">Uncommitted changes, untracked files, commits that exist only on this machine: Tossy tells you what a repository or worktree would lose before it goes.</p>
+      <ul class="points">
+        <li data-i18n="g.1"><b>Worktrees at a glance.</b> A repository lists every worktree that shares its object store. AI coding agents tend to leave many behind.</li>
+        <li data-i18n="g.2"><b>Caches per project.</b> A project folder lists the dependency and build caches inside it, with one button to clean them.</li>
+      </ul>
+    </div>
+    <figure class="shot">
+      <img src="shots/git.webp" width="1280" height="820" loading="lazy"
+           alt="A Git worktree: what each working tree would lose, and its rebuildable caches" data-i18n-alt="g.alt">
+    </figure>
+  </div>
+</section>
+
+<section class="section" id="cleaning">
+  <div class="wrap">
+    <p class="readout" data-i18n="k.eyebrow">Cleaning</p>
+    <h2 data-i18n="k.h2">One click, and it stays careful.</h2>
+    <div class="cards">
+      <article class="card">
+        <h3 data-i18n="k.1h">Auto Clean</h3>
+        <p data-i18n="k.1p">Sweeps the whole scan with the rules and your habits, shows what it finds as it goes, then throws the plan into the trash. It only takes what is regenerated on demand, or what matches something you deleted by hand before.</p>
+      </article>
+      <article class="card">
+        <h3 data-i18n="k.2h">In-use protection</h3>
+        <p data-i18n="k.2p">Anything written in the last few minutes, and the caches of apps that are running, are skipped. A clean never pulls a cache out from under a running program.</p>
+      </article>
+      <article class="card">
+        <h3 data-i18n="k.3h">It learns your habits</h3>
+        <p data-i18n="k.3p">Delete the same kind of thing by hand often enough and Auto Clean takes it next time, and says why. Restore something a habit picked and it counts double against the habit.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="trash">
+  <div class="wrap feature flip">
+    <div class="feature-text">
+      <p class="readout" data-i18n="t.eyebrow">Trash</p>
+      <h2 data-i18n="t.h2">A mark, not a move.</h2>
+      <p class="body" data-i18n="t.p">Putting something in Tossy’s trash only records a mark in a journal. The file stays where it is, and the system trash is never touched. Restoring drops the mark; emptying deletes exactly the marked paths, for good.</p>
+      <ul class="points">
+        <li data-i18n="t.1"><b>The bin grows with what is in it</b>, from a desk basket to a roll-off container, and shows where its contents came from.</li>
+        <li data-i18n="t.2"><b>A vehicle comes to empty it.</b> Each item leaves only once it has really been deleted, so the motion is the progress bar.</li>
+      </ul>
+    </div>
+    <figure class="shot">
+      <img src="shots/trash.webp" width="1280" height="820" loading="lazy"
+           alt="The trash view: where its contents came from, and the bin holding them" data-i18n-alt="t.alt">
+    </figure>
+  </div>
+</section>
+
+<section class="section" id="cli">
+  <div class="wrap feature">
+    <div class="feature-text">
+      <p class="readout" data-i18n="l.eyebrow">Command line</p>
+      <h2 data-i18n="l.h2">The same engine, in a terminal.</h2>
+      <p class="body" data-i18n="l.p">The desktop app and <code>tossy</code> share one Go engine: the same scanner, the same rules, the same trash and the same habits. What you remove in one can be restored from the other.</p>
+    </div>
+    <pre class="term" aria-label="tossy commands"><code><span class="c" data-i18n="l.c1"># the largest entries under a folder</span>
+<span class="p">$</span> tossy scan ~
+
+<span class="c" data-i18n="l.c2"># what is safe to clean (read-only)</span>
+<span class="p">$</span> tossy eval ~
+
+<span class="c" data-i18n="l.c3"># developer content, by kind (read-only)</span>
+<span class="p">$</span> tossy dev ~/projects
+
+<span class="c" data-i18n="l.c4"># a dry run; -yes moves the safe items to the trash</span>
+<span class="p">$</span> tossy clean ~
+<span class="p">$</span> tossy clean -yes ~
+
+<span class="c" data-i18n="l.c5"># changed your mind</span>
+<span class="p">$</span> tossy trash list
+<span class="p">$</span> tossy trash restore 3</code></pre>
+  </div>
+</section>
+
+<section class="section" id="download">
+  <div class="wrap">
+    <p class="readout" data-i18n="x.eyebrow">Download</p>
+    <h2 data-i18n="x.h2">Get Tossy.</h2>
+    <div class="downloads">
+      <article class="dl">
+        <h3>macOS</h3>
+        <p class="dl-req" data-i18n="x.mac.req">macOS 12 or later · Apple silicon and Intel</p>
+        <p data-i18n="x.mac.p">Open <code>tossy-&lt;version&gt;.dmg</code> and drag Tossy into Applications. The app is signed with a Developer ID and notarized by Apple, so it opens like any other.</p>
+      </article>
+      <article class="dl">
+        <h3>Linux</h3>
+        <p class="dl-req" data-i18n="x.linux.req">x86-64 and ARM64 · needs GTK 3</p>
+        <dl class="pkgs">
+          <dt>Debian, Ubuntu</dt>
+          <dd><code>sudo apt install ./tossy_&lt;version&gt;_amd64.deb</code></dd>
+          <dt>Fedora, RHEL</dt>
+          <dd><code>sudo dnf install ./tossy-&lt;version&gt;-1.x86_64.rpm</code></dd>
+          <dt data-i18n="x.linux.any">Any distribution, per user</dt>
+          <dd><code>sh install.sh tossy-&lt;version&gt;-linux-amd64.tar.gz</code></dd>
+        </dl>
+      </article>
+    </div>
+    <div class="dl-foot">
+      <a class="btn" id="dl-foot" href="https://github.com/21stware/tossy/releases/latest">Download</a>
+      <p class="fine" data-i18n="x.fine">The command-line tool and <code>SHA256SUMS</code> are attached to every release. The interface speaks English, 简体中文, 繁體中文 and 日本語.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-row">
+    <span class="brand"><img src="icon.png" width="22" height="22" alt=""><span>Tossy</span></span>
+    <nav aria-label="Footer">
+      <a href="https://github.com/21stware/tossy">GitHub</a>
+      <a href="https://github.com/21stware/tossy/releases" data-i18n="f.releases">Releases</a>
+      <a href="https://github.com/21stware/tossy/issues" data-i18n="f.issues">Issues</a>
+      <a href="https://github.com/egoist/mygo" data-i18n="f.mygo">Built with MyGo</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="main.js" defer></script>
+</body>
+</html>
