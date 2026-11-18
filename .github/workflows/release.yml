@@ -1,9 +1,9 @@
 name: Release
 
-# A tag v<version> builds the Linux packages and the Windows installers, with the command-line tool and the signed updates
-# of the app, and attaches them to a draft release. The macOS app is added to the draft from the
-# Mac that holds its Developer ID (Releasing, in the README): the runner has neither the
-# identity nor the notary credentials. You publish the draft: installed apps then update to it.
+# A tag v<version> builds the macOS app, signed with the Developer ID and notarized, the Linux
+# packages and the Windows installers, with the command-line tool and the signed updates of the
+# app, and attaches them to a draft release. The Developer ID and the notary credentials come
+# from the secrets (Releasing, in the README). You publish the draft: installed apps then update to it.
 # Run by hand, it builds everything as artifacts of the run, the macOS app signed ad hoc,
 # without a release.
 on:
@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # disk images need macOS; the runner signs the app ad hoc, which Apple does not notarize
+          # disk images need macOS; run by hand, the app is signed ad hoc and not notarized
           - { name: macOS, os: macos-latest, platform: darwin/universal, flags: "-sign - -skip-notarize", cli: "darwin/arm64 darwin/amd64" }
           - { name: Linux, os: ubuntu-latest, platform: "linux/amd64,linux/arm64", flags: "", cli: "linux/amd64 linux/arm64" }
           # on Windows mygo downloads NSIS for the installer; nothing signs it with Authenticode yet
@@ -51,13 +51,49 @@ jobs:
             echo "::error::Set the MYGO_UPDATER_PRIVATE_KEY secret: the key that signs updates (mygo keygen)"
             exit 1
           fi
-      # Not the macOS app of a release: an ad hoc signed one would replace the notarized one.
+      # The macOS app of a release is signed with the Developer ID and notarized: the certificate
+      # goes into a keychain of the job, with the notary profile that app/mygo.json names.
+      - name: Import the Developer ID and the notary credentials
+        if: matrix.name == 'macOS' && github.ref_type == 'tag'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          for s in MACOS_CERTIFICATE MACOS_CERTIFICATE_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+            if [ -z "${!s}" ]; then
+              echo "::error::Set the $s secret: the macOS app of a release is signed and notarized (Releasing, in the README)"
+              exit 1
+            fi
+          done
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -base64 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain
+          profile=$(jq -r .macos.notarize.keychainProfile app/mygo.json)
+          xcrun notarytool store-credentials "$profile" --keychain "$keychain" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          # the profile is in this keychain, not the login keychain it is in on the Mac
+          jq --arg k "$keychain" '.macos.notarize.keychain = $k' app/mygo.json > "$RUNNER_TEMP/mygo.json"
+          mv "$RUNNER_TEMP/mygo.json" app/mygo.json
       - name: Build the app
-        if: matrix.name != 'macOS' || github.ref_type != 'tag'
         working-directory: app
         env:
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
-        run: go run github.com/egoist/mygo/cmd/mygo build -platform "${{ matrix.platform }}" ${{ matrix.flags }} .
+        run: |
+          flags="${{ matrix.flags }}"
+          # a release's macOS app signs with macos.signingIdentity and is notarized
+          if [ "${{ matrix.name }}" = macOS ] && [ "${{ github.ref_type }}" = tag ]; then flags=""; fi
+          go run github.com/egoist/mygo/cmd/mygo build -platform "${{ matrix.platform }}" $flags .
       - name: Build the command-line tool
         run: |
           version=$(jq -r .version app/mygo.json)
@@ -78,7 +114,7 @@ jobs:
           shopt -s nullglob
           files=(app/build/*/*.dmg app/build/*/*.deb app/build/*/*.rpm app/build/*/*.tar.gz app/build/*/*-setup-*.exe)
           files+=(app/build/*/update-*.json app/build/*/*.delta) # what installed apps update from
-          if [ ${#files[@]} -gt 0 ]; then cp "${files[@]}" dist/; fi # none from macOS on a tag
+          if [ ${#files[@]} -gt 0 ]; then cp "${files[@]}" dist/; fi
           # one install.sh serves every architecture
           if [ -f app/build/linux-amd64/install.sh ]; then cp app/build/linux-amd64/install.sh dist/; fi
           if [ -f app/build/windows-amd64/install.ps1 ]; then cp app/build/windows-amd64/install.ps1 dist/; fi

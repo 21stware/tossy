@@ -194,7 +194,7 @@ cd app && TOSSY_ICONS=$PWD/../docs go test -run TestDockIcons .
 
 ## Releasing
 
-[.github/workflows/release.yml](.github/workflows/release.yml) builds the Linux packages (x86-64 and ARM64) on Ubuntu, the Windows installers (x64 and ARM64) on Windows and the command-line tool for every platform, and attaches them to a draft release. The macOS app is built on the Mac that holds the Developer ID that signs it, and added to the same draft. To release, set `version` in [app/mygo.json](app/mygo.json), commit, and push the matching tag:
+[.github/workflows/release.yml](.github/workflows/release.yml) builds the macOS app on macOS, signed with the Developer ID and notarized by Apple, the Linux packages (x86-64 and ARM64) on Ubuntu, the Windows installers (x64 and ARM64) on Windows and the command-line tool for every platform, and attaches them to a draft release. To release, set `version` in [app/mygo.json](app/mygo.json), commit, and push the matching tag:
 
 ```bash
 git tag v0.1.0
@@ -204,16 +204,32 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow checks that the tag matches the version, then creates the draft release `v0.1.0` with generated notes and `SHA256SUMS`. When it has finished, build the macOS app and upload it, from `app`:
+The workflow checks that the tag matches the version, then creates the draft release `v0.1.0` with generated notes and `SHA256SUMS`. It signs the macOS app with `macos.signingIdentity` of [app/mygo.json](app/mygo.json), has Apple notarize the disk image under the profile that `macos.notarize` names, and staples the ticket. The Developer ID and the notary credentials are secrets of the repository, set once: export the "Developer ID Application" certificate with its private key from Keychain Access as a `.p12` with a password, create an app-specific password for the Apple ID at [account.apple.com](https://account.apple.com) (Sign-In and Security), then:
+
+```bash
+base64 -i certificate.p12 | gh secret set MACOS_CERTIFICATE --repo 21stware/tossy
+```
+
+```bash
+gh secret set MACOS_CERTIFICATE_PASSWORD --repo 21stware/tossy
+```
+
+```bash
+gh secret set APPLE_ID --repo 21stware/tossy
+```
+
+```bash
+gh secret set APPLE_TEAM_ID --repo 21stware/tossy --body R54TY86R4C
+```
+
+```bash
+gh secret set APPLE_APP_PASSWORD --repo 21stware/tossy
+```
+
+A tag without them fails before building. To build and notarize the macOS app on a Mac instead, store the notary profile once with `xcrun notarytool store-credentials tossy-notary`, and from `app`:
 
 ```bash
 MYGO_UPDATER_PRIVATE_KEY="$(cat "$HOME/Library/Application Support/mygo/update-keys/mygo-update.key")" go tool mygo build -platform darwin/universal -upload .
-```
-
-The build signs the app with `macos.signingIdentity` of [app/mygo.json](app/mygo.json), has Apple notarize the disk image and staples the ticket, then adds the disk image, the update archive and its manifest to the draft, and their checksums to `SHA256SUMS`. The notary credentials are the keychain profile that `macos.notarize` names, stored once:
-
-```bash
-xcrun notarytool store-credentials tossy-notary
 ```
 
 Review the draft and publish it on GitHub: once it is the latest release, installed apps update to it. Running the workflow by hand (Actions → Release → Run workflow) builds everything as run artifacts without a release, the macOS app signed ad hoc. [.github/workflows/ci.yml](.github/workflows/ci.yml) vets and tests every push and pull request on Linux and macOS.
